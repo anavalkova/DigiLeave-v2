@@ -1,0 +1,19 @@
+# ── Java / Maven ──────────────────────────────────────────────────────────────
+api/target/
+api/.mvn/
+api/*.iml
+*.class
+*.jar
+*.war
+
+# ── Node / React ──────────────────────────────────────────────────────────────
+my-vacation-app/node_modules/
+my-vacation-app/dist/
+my-vacation-app/.env
+my-vacation-app/.env.local
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.DS_Store
+Thumbs.db
