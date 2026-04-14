@@ -6,7 +6,7 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration — edit once, then leave alone
 # ─────────────────────────────────────────────────────────────────────────────
-GCP_PROJECT="your-gcp-project-id"      # gcloud projects list
+GCP_PROJECT="digileave-prod"      # gcloud projects list
 REGION="europe-west1"                   # Cloud Run + Artifact Registry region
 AR_REPO="digileave"                     # Artifact Registry repository name
 SERVICE="digileave-api"                 # Cloud Run service name
@@ -25,7 +25,6 @@ IMAGE="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${AR_REPO}/${SERVICE}"
 # ── 1. GCP auth & project ─────────────────────────────────────────────────────
 echo "▶ Configuring GCP project..."
 gcloud config set project "$GCP_PROJECT"
-gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
 # ── 2. Artifact Registry repo (idempotent) ────────────────────────────────────
 if ! gcloud artifacts repositories describe "$AR_REPO" \
@@ -37,12 +36,11 @@ if ! gcloud artifacts repositories describe "$AR_REPO" \
     --description="Digileave container images"
 fi
 
-# ── 3. Build & push Docker image ──────────────────────────────────────────────
-echo "▶ Building Docker image..."
-docker build -t "${IMAGE}:latest" ./api
-
-echo "▶ Pushing image to Artifact Registry..."
-docker push "${IMAGE}:latest"
+# ── 3. Build & push image via Cloud Build (no local Docker required) ─────────
+echo "▶ Building image in Cloud Build and pushing to Artifact Registry..."
+gcloud builds submit ./api \
+  --tag "${IMAGE}:latest" \
+  --region="$REGION"
 
 # ── 4. Store MONGODB_URI in Secret Manager ────────────────────────────────────
 # Database credentials must never travel as plain env vars — use Secret Manager.
