@@ -1,0 +1,7 @@
+target/
+.mvn/
+.git/
+.gitignore
+*.md
+.env
+**/*.class

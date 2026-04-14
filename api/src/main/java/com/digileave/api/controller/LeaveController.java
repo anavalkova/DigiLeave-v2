@@ -5,9 +5,11 @@ import com.digileave.api.dto.LeaveSummaryDto;
 import com.digileave.api.dto.PendingRequestDto;
 import com.digileave.api.dto.StatusUpdateDto;
 import com.digileave.api.model.LeaveRequest;
+import com.digileave.api.model.LeaveStatus;
 import com.digileave.api.service.LeaveService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -64,12 +66,35 @@ public class LeaveController {
         }
     }
 
+    @PatchMapping("/{requestId}/cancel")
+    public ResponseEntity<?> cancelRequest(
+            @PathVariable String requestId,
+            @RequestParam String userId) {
+        try {
+            LeaveRequest cancelled = leaveService.cancelRequest(requestId, userId);
+            return ResponseEntity.ok(cancelled);
+        } catch (ResponseStatusException e) {
+            throw e; // let Spring return the correct 4xx status
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.unprocessableEntity().body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     @PatchMapping("/{requestId}/status")
     public ResponseEntity<LeaveRequest> updateRequestStatus(
             @PathVariable String requestId,
             @RequestBody StatusUpdateDto dto) {
         try {
-            LeaveRequest updated = leaveService.updateRequestStatus(requestId, dto.getStatus());
+            LeaveRequest updated;
+            if (dto.getStatus() == LeaveStatus.APPROVED) {
+                updated = leaveService.approveRequest(requestId);
+            } else if (dto.getStatus() == LeaveStatus.REJECTED) {
+                updated = leaveService.rejectRequest(requestId);
+            } else {
+                updated = leaveService.updateRequestStatus(requestId, dto.getStatus());
+            }
             return ResponseEntity.ok(updated);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();

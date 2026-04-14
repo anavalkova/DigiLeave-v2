@@ -7,6 +7,10 @@ import LeaveCalendar, { isoOf, HOLIDAYS } from './LeaveCalendar'
 import StatusBadge from './StatusBadge'
 import './App.css'
 
+// ─── API base URL ─────────────────────────────────────────────────────────────
+// Set VITE_API_BASE_URL in .env.production (written by deploy.sh) or .env for dev.
+const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+
 // ─── Static data ─────────────────────────────────────────────────────────────
 
 const LEAVE_TYPE_LABELS = {
@@ -69,6 +73,7 @@ function BalanceCard({ label, value, accent }) {
     violet:  'border-t-violet-500 text-violet-600',
     amber:   'border-t-amber-500 text-amber-600',
     emerald: 'border-t-emerald-500 text-emerald-600',
+    red:     'border-t-red-500 text-red-600',
   }
   return (
     <article
@@ -207,6 +212,7 @@ function App() {
   const [reason, setReason]           = useState('')
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting]   = useState(false)
+  const [cancelError, setCancelError] = useState('')
 
   // ── Auth handlers ──────────────────────────────────────────────────────────
 
@@ -214,7 +220,7 @@ function App() {
     setAuthError('')
     setAuthLoading(true)
     try {
-      const { data } = await axios.post('http://localhost:8080/api/auth/google', {
+      const { data } = await axios.post(`${API}/api/auth/google`, {
         idToken: credentialResponse.credential,
       })
       setHistoryLoading(true)
@@ -253,7 +259,7 @@ function App() {
     setHistoryLoading(true)
     setHistoryError('')
     try {
-      const { data } = await axios.get(`http://localhost:8080/api/leave/user/${userId}`)
+      const { data } = await axios.get(`${API}/api/leave/user/${userId}`)
       setHistory(data.map((item) => ({ ...item, status: item.status.toLowerCase() })))
     } catch (err) {
       if (err.response) {
@@ -266,7 +272,7 @@ function App() {
 
   async function fetchSummary(userId) {
     try {
-      const { data } = await axios.get(`http://localhost:8080/api/leave/summary/${userId}`)
+      const { data } = await axios.get(`${API}/api/leave/summary/${userId}`)
       setSummary(data)
     } catch {
       // non-critical — cards will show 0 until next successful fetch
@@ -285,7 +291,7 @@ function App() {
   async function fetchAllUsers() {
     setUsersLoading(true)
     try {
-      const { data } = await axios.get('http://localhost:8080/api/users')
+      const { data } = await axios.get(`${API}/api/users`)
       setAllUsers(data)
     } catch {
       // non-critical
@@ -296,17 +302,17 @@ function App() {
 
   async function handleRoleUpdate(userId, role) {
     // Let the error propagate — AdminPanel.saveRow only clears edits on success
-    const { data } = await axios.patch(`http://localhost:8080/api/users/${userId}/role`, { role })
+    const { data } = await axios.patch(`${API}/api/users/${userId}/role`, { role })
     setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
   }
 
   async function handleEntitlementUpdate(userId, entitledDays) {
-    const { data } = await axios.patch(`http://localhost:8080/api/users/${userId}/entitlement`, { entitledDays })
+    const { data } = await axios.patch(`${API}/api/users/${userId}/entitlement`, { entitledDays })
     setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
   }
 
   async function handleApproverSave(userId, approverEmails) {
-    const { data } = await axios.patch(`http://localhost:8080/api/users/${userId}/approver`, { approverEmails })
+    const { data } = await axios.patch(`${API}/api/users/${userId}/approver`, { approverEmails })
     setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
   }
 
@@ -317,7 +323,7 @@ function App() {
   async function fetchPendingRequests(userId) {
     setPendingLoading(true)
     try {
-      const { data } = await axios.get(`http://localhost:8080/api/leave/pending?userId=${userId}`)
+      const { data } = await axios.get(`${API}/api/leave/pending?userId=${userId}`)
       setPendingRequests(data)
     } catch {
       // non-critical
@@ -328,21 +334,38 @@ function App() {
 
   async function handleApprove(requestId) {
     try {
-      await axios.patch(`http://localhost:8080/api/leave/${requestId}/status`, { status: 'APPROVED' })
-      // Remove from pending list immediately (optimistic)
-      setPendingRequests((prev) => prev.filter((r) => r.id !== requestId))
-      // Refresh the submitter's summary is not needed here — they'll see it on their next load
+      await axios.patch(`${API}/api/leave/${requestId}/status`, { status: 'APPROVED' })
+      // Re-fetch so the approvals table and balance cards reflect the DB truth
+      fetchPendingRequests(user.id)
+      fetchSummary(user.id)
     } catch {
-      // silently ignore — list will stay stale until re-fetch
+      // silently ignore — table re-fetches on next tab visit
     }
   }
 
   async function handleReject(requestId) {
     try {
-      await axios.patch(`http://localhost:8080/api/leave/${requestId}/status`, { status: 'REJECTED' })
-      setPendingRequests((prev) => prev.filter((r) => r.id !== requestId))
+      await axios.patch(`${API}/api/leave/${requestId}/status`, { status: 'REJECTED' })
+      fetchPendingRequests(user.id)
+      fetchSummary(user.id)
     } catch {
       // silently ignore
+    }
+  }
+
+  async function handleCancel(requestId) {
+    setCancelError('')
+    try {
+      await axios.patch(`${API}/api/leave/${requestId}/cancel?userId=${user.id}`)
+      // Re-fetch My Requests and balance from DB — don't patch state locally
+      fetchUserRequests(user.id)
+      fetchSummary(user.id)
+    } catch (err) {
+      const data = err.response?.data
+      const msg = typeof data === 'string'
+        ? data
+        : data?.message || `Request failed (HTTP ${err.response?.status ?? 'network error'})`
+      setCancelError(msg)
     }
   }
 
@@ -350,7 +373,7 @@ function App() {
     if (user?.id && (user?.role === 'ADMIN' || user?.role === 'APPROVER')) {
       fetchPendingRequests(user.id)
     }
-  }, [user?.id])
+  }, [user?.id, activeTab])
 
   // ── Form handlers ──────────────────────────────────────────────────────────
 
@@ -371,24 +394,13 @@ function App() {
     setSubmitError('')
     setSubmitting(true)
     try {
-      const { data } = await axios.post('http://localhost:8080/api/leave/request', {
+      const { data } = await axios.post(`${API}/api/leave/request`, {
         userId: user.id,
         startDate,
         endDate,
         type: LEAVE_TYPE_LABELS[leaveType] ?? leaveType,
       })
-      setHistory((prev) => [
-        {
-          id: data.id,
-          requestDate: data.requestDate,
-          startDate: data.startDate,
-          endDate: data.endDate,
-          totalDays: data.totalDays,
-          type: data.type,
-          status: data.status.toLowerCase(),
-        },
-        ...prev,
-      ])
+      setHistory((prev) => [{ ...data, status: data.status.toLowerCase() }, ...prev])
       fetchSummary(user.id)
       handleClear()
       setActiveTab('history')
@@ -410,13 +422,15 @@ function App() {
   const remainingAfter   = summary != null && previewDays != null
     ? summary.remainingDays - previewDays
     : null
-  const totalDaysAccounted = history.reduce((sum, row) => sum + row.totalDays, 0)
+  const totalDaysAccounted = history
+    .filter((row) => row.status !== 'rejected' && row.status !== 'cancelled')
+    .reduce((sum, row) => sum + row.totalDays, 0)
 
   // Map of ISO date → 'approved' | 'pending' for marking existing leave on the calendar
   const leaveDateMap = useMemo(() => {
     const map = {}
     history.forEach(req => {
-      if (req.status === 'rejected') return
+      if (req.status === 'rejected' || req.status === 'cancelled') return
       const cur = new Date(req.startDate + 'T00:00:00')
       const end = new Date(req.endDate   + 'T00:00:00')
       while (cur <= end) {
@@ -446,7 +460,7 @@ function App() {
   console.log('Client ID loaded:', import.meta.env.VITE_GOOGLE_CLIENT_ID)
 
   const canApprove = user.role === 'ADMIN' || user.role === 'APPROVER'
-  const pendingCount = pendingRequests.length
+  const pendingCount = pendingRequests.filter((r) => r.status === 'PENDING').length
 
   const tabs = [
     { id: 'request',   label: 'Request Leave' },
@@ -677,6 +691,11 @@ function App() {
                 </div>
               ) : (
                 <div role="region" aria-label="Leave request history" tabIndex="0" className="overflow-x-auto">
+                  {cancelError && (
+                    <p role="alert" className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                      {cancelError}
+                    </p>
+                  )}
                   <table className="w-full text-sm text-left text-gray-700">
                     <caption className="sr-only">
                       All leave requests submitted during the current leave year.
@@ -702,9 +721,12 @@ function App() {
                           <td className="py-3 pr-4">{row.type}</td>
                           <td className="py-3 pr-4"><StatusBadge status={row.status} /></td>
                           <td className="py-3">
-                            {row.status === 'pending' && (
+                            {(row.status === 'pending' ||
+                              (row.status === 'approved' &&
+                               new Date(row.startDate + 'T00:00:00') > new Date())) && (
                               <button
                                 type="button"
+                                onClick={() => handleCancel(row.id)}
                                 aria-label={`Cancel request dated ${fmtDate(row.requestDate)}`}
                                 className="text-red-500 hover:underline text-xs font-medium"
                               >

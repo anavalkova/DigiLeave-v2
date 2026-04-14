@@ -20,5 +20,6 @@ public class User {
     private Role role;
     private int entitledDays;
     private int remainingDays;
+    private int usedDays;
     private List<String> approverEmails;
 }

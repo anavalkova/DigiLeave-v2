@@ -13,3 +13,8 @@ google:
   # Empty-string default lets the app start so the @PostConstruct check
   # can log a specific error instead of Spring crashing with a placeholder error.
   client-id: ${GOOGLE_CLIENT_ID:}
+
+# Comma-separated allowed CORS origins.
+# Override with the ALLOWED_ORIGINS environment variable in production.
+cors:
+  allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173}

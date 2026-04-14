@@ -1,12 +1,32 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 
-// ─── Manager multi-select dropdown (Portal-based to escape table stacking) ────
+// ─── Toast ────────────────────────────────────────────────────────────────────
+
+function Toast({ message, type = 'success', onDone }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 3000)
+    return () => clearTimeout(t)
+  }, [onDone])
+
+  const base = 'fixed bottom-6 right-6 z-[10000] rounded-lg px-4 py-3 text-sm font-medium shadow-lg flex items-center gap-2'
+  const colours = type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+
+  return createPortal(
+    <div className={`${base} ${colours}`}>
+      {type === 'success' ? '✓' : '!'} {message}
+    </div>,
+    document.body
+  )
+}
+
+// ─── Manager multi-select dropdown (Portal-based to escape table stacking) ───
 
 function ManagerDropdown({ managers, selected, userEmail, onChange }) {
-  const [open, setOpen]       = useState(false)
-  const [pos, setPos]         = useState({ top: 0, left: 0, width: 0 })
-  const triggerRef            = useRef(null)
+  const [open, setOpen] = useState(false)
+  const [pos, setPos]   = useState({ top: 0, left: 0, width: 0 })
+  const triggerRef      = useRef(null)
+  const panelRef        = useRef(null)   // ← ref for the portal panel
 
   // Recalculate portal position whenever the dropdown opens
   useEffect(() => {
@@ -19,11 +39,19 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
     })
   }, [open])
 
-  // Close on any outside click
+  // Close on outside click — must exclude BOTH the trigger AND the portal panel.
+  // Without checking panelRef, any mousedown inside the portal looks "outside"
+  // because it lives on document.body, so the dropdown was closing before the
+  // checkbox onChange could fire.
   useEffect(() => {
     if (!open) return
     function onMouseDown(e) {
-      if (!triggerRef.current?.contains(e.target)) setOpen(false)
+      if (
+        !triggerRef.current?.contains(e.target) &&
+        !panelRef.current?.contains(e.target)
+      ) {
+        setOpen(false)
+      }
     }
     document.addEventListener('mousedown', onMouseDown)
     return () => document.removeEventListener('mousedown', onMouseDown)
@@ -37,7 +65,7 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
   }
 
   const selectedNames = managers
-    .filter((m) => selected.includes(m.email))
+    .filter((m) => selected.includes(m.email) && m.email !== userEmail)
     .map((m) => m.name)
 
   return (
@@ -65,6 +93,7 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
       {/* Panel rendered via Portal so the table's overflow/stacking never clips it */}
       {open && createPortal(
         <div
+          ref={panelRef}
           style={{
             position: 'absolute',
             top:      pos.top + 4,
@@ -74,12 +103,11 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
           }}
           className="rounded-md border border-gray-200 bg-white shadow-lg py-1"
         >
-          {managers.length === 0 ? (
+          {managers.filter((m) => m.email !== userEmail).length === 0 ? (
             <p className="px-3 py-2 text-xs text-gray-400">No admins or approvers yet</p>
           ) : (
-            managers.map((m) => {
+            managers.filter((m) => m.email !== userEmail).map((m) => {
               const checked = selected.includes(m.email)
-              const isSelf  = m.email === userEmail
               return (
                 <label
                   key={m.email}
@@ -96,9 +124,6 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
                   <span className={`text-xs ${checked ? 'font-medium text-gray-900' : 'text-gray-600'}`}>
                     {m.name}
                   </span>
-                  {isSelf && (
-                    <span className="ml-auto text-xs text-blue-500 font-normal">self</span>
-                  )}
                 </label>
               )
             })
@@ -110,7 +135,7 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
   )
 }
 
-// ─── Admin panel ─────────────────────────────────────────────────────────────
+// ─── Admin panel ──────────────────────────────────────────────────────────────
 
 export default function AdminPanel({
   allUsers,
@@ -120,11 +145,19 @@ export default function AdminPanel({
   onSaveEntitlement,
 }) {
   // rowEdits: { [userId]: { role?, approverEmails?, entitledDays? } }
-  const [rowEdits, setRowEdits] = useState({})
-  const [saving, setSaving]     = useState({}) // { [userId]: boolean }
-  const [saveError, setSaveError] = useState({}) // { [userId]: string }
+  const [rowEdits, setRowEdits]     = useState({})
+  const [saving, setSaving]         = useState({})
+  const [saveError, setSaveError]   = useState({})
+  const [toast, setToast]           = useState(null)       // { message, type }
+  const [approverWarn, setApproverWarn] = useState(null)   // userId pending confirmation
 
-  const managers = allUsers.filter((u) => u.role === 'ADMIN' || u.role === 'APPROVER')
+  // ── Derived: managers list reflects pending role changes, not just saved state ──
+  // When you change a user's role to APPROVER in the dropdown (before saving),
+  // they immediately appear as an option in other rows' manager dropdowns.
+  const managers = allUsers.filter((u) => {
+    const effectiveRole = rowEdits[u.id]?.role ?? u.role ?? 'USER'
+    return effectiveRole === 'ADMIN' || effectiveRole === 'APPROVER'
+  })
 
   function get(userId, field, fallback) {
     return rowEdits[userId]?.[field] ?? fallback
@@ -144,7 +177,27 @@ export default function AdminPanel({
     return e !== undefined && Object.keys(e).length > 0
   }
 
-  async function saveRow(u) {
+  // True if this user is being demoted FROM Approver and currently manages others
+  function wouldOrphanUsers(u) {
+    const pendingRole = rowEdits[u.id]?.role
+    if (!pendingRole || pendingRole === u.role) return false
+    if (u.role !== 'APPROVER') return false
+    return allUsers.some(
+      (other) => other.id !== u.id && other.approverEmails?.includes(u.email)
+    )
+  }
+
+  // Called when Save is clicked — may show a warning first
+  function handleSaveClick(u) {
+    if (wouldOrphanUsers(u)) {
+      setApproverWarn(u.id)
+      return
+    }
+    doSave(u)
+  }
+
+  async function doSave(u) {
+    setApproverWarn(null)
     const edits = rowEdits[u.id]
     if (!edits) return
 
@@ -152,22 +205,20 @@ export default function AdminPanel({
     setSaveError((prev) => { const next = { ...prev }; delete next[u.id]; return next })
 
     try {
-      // Fire only the fields that actually changed, in parallel.
-      // Callbacks must throw on failure so we don't clear edits on error.
       await Promise.all([
         'role'           in edits ? onSaveRole(u.id, edits.role)                : null,
         'approverEmails' in edits ? onSaveApprovers(u.id, edits.approverEmails) : null,
         'entitledDays'   in edits ? onSaveEntitlement(u.id, edits.entitledDays) : null,
       ].filter(Boolean))
 
-      // Only clear local edits after every save has succeeded
+      // Only clear local edits after every save succeeded
       setRowEdits((prev) => {
         const next = { ...prev }
         delete next[u.id]
         return next
       })
+      setToast({ message: `${u.name} saved.`, type: 'success' })
     } catch {
-      // Leave rowEdits intact so the user's selections are preserved
       setSaveError((prev) => ({ ...prev, [u.id]: 'Save failed — please try again.' }))
     } finally {
       setSaving((prev) => ({ ...prev, [u.id]: false }))
@@ -176,6 +227,14 @@ export default function AdminPanel({
 
   return (
     <div id="user-management">
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDone={() => setToast(null)}
+        />
+      )}
+
       {usersLoading ? (
         <p className="text-sm text-gray-500 py-8 text-center">Loading users…</p>
       ) : (
@@ -193,16 +252,19 @@ export default function AdminPanel({
             </thead>
             <tbody className="divide-y divide-gray-100">
               {allUsers.map((u) => {
-                const dirty          = isDirty(u.id)
-                const isSaving       = saving[u.id] ?? false
-                const error          = saveError[u.id]
-                const currentRole    = get(u.id, 'role', u.role ?? 'USER')
+                const dirty            = isDirty(u.id)
+                const isSaving         = saving[u.id] ?? false
+                const error            = saveError[u.id]
+                const currentRole      = get(u.id, 'role', u.role ?? 'USER')
                 const currentApprovers = get(u.id, 'approverEmails', u.approverEmails ?? [])
-                const currentDays    = get(u.id, 'entitledDays', u.entitledDays)
+                const currentDays      = get(u.id, 'entitledDays', u.entitledDays)
+                const showWarn         = approverWarn === u.id
 
+                // key must be on Fragment — not on an inner <tr> — so React can
+                // properly track multi-row groups in a list.
                 return (
-                  <>
-                    <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                  <Fragment key={u.id}>
+                    <tr className="hover:bg-gray-50 transition-colors">
 
                       {/* Name */}
                       <td className="py-3 pr-4 font-medium whitespace-nowrap">{u.name}</td>
@@ -210,7 +272,7 @@ export default function AdminPanel({
                       {/* Email */}
                       <td className="py-3 pr-4 text-xs text-gray-500">{u.email}</td>
 
-                      {/* Role */}
+                      {/* Role — controlled select */}
                       <td className="py-3 pr-4">
                         <select
                           value={currentRole}
@@ -224,7 +286,7 @@ export default function AdminPanel({
                         </select>
                       </td>
 
-                      {/* Managers */}
+                      {/* Managers — controlled multi-select dropdown */}
                       <td className="py-3 pr-4">
                         <ManagerDropdown
                           managers={managers}
@@ -245,27 +307,52 @@ export default function AdminPanel({
                         />
                       </td>
 
-                      {/* Save */}
+                      {/* Save — disabled unless this specific row has unsaved changes */}
                       <td className="py-3">
                         <button
                           type="button"
-                          onClick={() => saveRow(u)}
+                          onClick={() => handleSaveClick(u)}
                           disabled={!dirty || isSaving}
                           className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
                         >
                           {isSaving ? 'Saving…' : 'Save'}
                         </button>
                       </td>
-
                     </tr>
+
+                    {/* Approver-demotion warning row */}
+                    {showWarn && (
+                      <tr className="bg-amber-50">
+                        <td colSpan={6} className="py-2 px-3 text-xs text-amber-800">
+                          <span className="font-medium">Warning:</span>{' '}
+                          {u.name} is currently a manager for other users. Removing their
+                          Approver role will not automatically reassign those users.{' '}
+                          <button
+                            type="button"
+                            onClick={() => doSave(u)}
+                            className="underline font-medium text-amber-900 hover:text-amber-700"
+                          >
+                            Save anyway
+                          </button>
+                          {' · '}
+                          <button
+                            type="button"
+                            onClick={() => setApproverWarn(null)}
+                            className="underline text-amber-700 hover:text-amber-500"
+                          >
+                            Cancel
+                          </button>
+                        </td>
+                      </tr>
+                    )}
 
                     {/* Inline error row — only rendered on save failure */}
                     {error && (
-                      <tr key={`${u.id}-err`} className="bg-red-50">
+                      <tr className="bg-red-50">
                         <td colSpan={6} className="py-1.5 px-3 text-xs text-red-600">{error}</td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 )
               })}
             </tbody>

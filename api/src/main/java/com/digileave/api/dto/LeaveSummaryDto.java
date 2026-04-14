@@ -11,4 +11,5 @@ public class LeaveSummaryDto {
     private int usedDays;
     private int pendingDays;
     private int remainingDays;
+    private int rejectedDays;
 }

@@ -17,4 +17,6 @@ public interface LeaveRequestRepository extends MongoRepository<LeaveRequest, St
     List<LeaveRequest> findByStatus(LeaveStatus status);
 
     List<LeaveRequest> findByStatusAndApproverEmailsContaining(LeaveStatus status, String approverEmail);
+
+    List<LeaveRequest> findByApproverEmailsContaining(String approverEmail);
 }

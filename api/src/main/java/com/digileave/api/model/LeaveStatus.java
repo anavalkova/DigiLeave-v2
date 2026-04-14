@@ -1,5 +1,5 @@
 package com.digileave.api.model;
 
 public enum LeaveStatus {
-    PENDING, APPROVED, REJECTED
+    PENDING, APPROVED, REJECTED, CANCELLED
 }

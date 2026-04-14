@@ -37,7 +37,9 @@ public class UserService {
     public User updateApprovers(String userId, List<String> approverEmails) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
-        user.setApproverEmails(approverEmails != null ? approverEmails : new ArrayList<>());
+        List<String> sanitised = approverEmails == null ? new ArrayList<>() : new ArrayList<>(approverEmails);
+        sanitised.remove(user.getEmail()); // users must not be their own approver
+        user.setApproverEmails(sanitised);
         return userRepository.save(user);
     }
 
