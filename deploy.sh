@@ -68,12 +68,12 @@ echo "▶ Deploying backend to Cloud Run..."
 
 # ^|^ is a custom delimiter so the comma inside ALLOWED_ORIGINS doesn't confuse
 # --set-env-vars (which normally uses comma as the key=value separator).
-gcloud run deploy digileave-api \
-  --image="$IMAGE:latest" \
-  --region="europe-west1" \
+gcloud run deploy "$SERVICE" \
+  --image="${IMAGE}:latest" \
+  --region="$REGION" \
   --vpc-connector=digileave-connector \
   --vpc-egress=all-traffic \
-  --allow-unauthenticated  
+  --allow-unauthenticated \
   --port=8080 \
   --memory=512Mi \
   --cpu=1 \

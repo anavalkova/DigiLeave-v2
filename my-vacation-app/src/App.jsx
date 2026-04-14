@@ -8,8 +8,9 @@ import StatusBadge from './StatusBadge'
 import './App.css'
 
 // ─── API base URL ─────────────────────────────────────────────────────────────
-// Set VITE_API_BASE_URL in .env.production (written by deploy.sh) or .env for dev.
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+// Dev:  .env.development → http://localhost:8080
+// Prod: .env.production  → Cloud Run URL (written by deploy.sh)
+const API = import.meta.env.VITE_API_BASE_URL
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 

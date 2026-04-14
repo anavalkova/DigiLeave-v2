@@ -39,12 +39,17 @@ public class SecurityConfig {
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
-        List<String> origins = Arrays.asList(allowedOriginsRaw.split(","));
+        // Merge env-configured origins with the hard-coded production Firebase origin
+        List<String> origins = new java.util.ArrayList<>(Arrays.asList(allowedOriginsRaw.split(",")));
+        if (!origins.contains("https://digileave-493111.web.app")) {
+            origins.add("https://digileave-493111.web.app");
+        }
 
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(origins);
-        config.setAllowedMethods(List.of("GET", "POST", "PATCH"));
-        config.setAllowedHeaders(List.of("*"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        config.setAllowedHeaders(List.of("Content-Type", "Authorization"));
+        config.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", config);
