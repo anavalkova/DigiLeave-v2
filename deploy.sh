@@ -6,7 +6,7 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration — edit once, then leave alone
 # ─────────────────────────────────────────────────────────────────────────────
-GCP_PROJECT="digileave-prod"      # gcloud projects list
+GCP_PROJECT="digileave-493111"      # gcloud projects list
 REGION="europe-west1"                   # Cloud Run + Artifact Registry region
 AR_REPO="digileave"                     # Artifact Registry repository name
 SERVICE="digileave-api"                 # Cloud Run service name
@@ -68,11 +68,12 @@ echo "▶ Deploying backend to Cloud Run..."
 
 # ^|^ is a custom delimiter so the comma inside ALLOWED_ORIGINS doesn't confuse
 # --set-env-vars (which normally uses comma as the key=value separator).
-gcloud run deploy "$SERVICE" \
-  --image="${IMAGE}:latest" \
-  --region="$REGION" \
-  --platform=managed \
-  --allow-unauthenticated \
+gcloud run deploy digileave-api \
+  --image="$IMAGE:latest" \
+  --region="europe-west1" \
+  --vpc-connector=digileave-connector \
+  --vpc-egress=all-traffic \
+  --allow-unauthenticated  
   --port=8080 \
   --memory=512Mi \
   --cpu=1 \
