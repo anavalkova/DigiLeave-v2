@@ -348,6 +348,7 @@ public class LeaveService {
                 .filter(r -> r.getUserId() != null && visibleIds.contains(r.getUserId()))
                 .filter(r -> r.getStatus() == LeaveStatus.APPROVED
                           || r.getStatus() == LeaveStatus.PENDING)
+                .filter(r -> r.getStartDate() != null && r.getEndDate() != null)
                 .filter(r -> !r.getEndDate().isBefore(monthStart)
                           && !r.getStartDate().isAfter(monthEnd))
                 .map(r -> {

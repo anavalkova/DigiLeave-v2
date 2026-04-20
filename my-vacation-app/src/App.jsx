@@ -197,8 +197,8 @@ function App() {
   const [historyError, setHistoryError] = useState('')
   const [summary, setSummary]           = useState(null)
 
-  // Active tab: 'request' | 'history' | 'approvals' | 'users'
-  const [activeTab, setActiveTab] = useState('request')
+  // Active tab: 'team' | 'request' | 'history' | 'approvals' | 'users'
+  const [activeTab, setActiveTab] = useState('team')
 
   // Admin state
   const [allUsers, setAllUsers]         = useState([])
@@ -490,9 +490,9 @@ function App() {
   const pendingCount = pendingRequests.filter((r) => r.status === 'PENDING').length
 
   const tabs = [
+    { id: 'team',     label: 'Team Calendar' },
     { id: 'request',  label: 'Request Leave' },
     { id: 'history',  label: 'My Requests' },
-    { id: 'team',     label: 'Team Calendar' },
     ...(canApprove ? [{ id: 'approvals', label: pendingCount > 0 ? `Approvals (${pendingCount})` : 'Approvals' }] : []),
     ...(user.role === 'ADMIN' ? [{ id: 'users', label: 'Users' }] : []),
   ]
