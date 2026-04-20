@@ -31,6 +31,15 @@ public class UserController {
         return ResponseEntity.ok(userService.getAllUsers());
     }
 
+    @GetMapping("/{id}")
+    public ResponseEntity<User> getUser(@PathVariable String id) {
+        try {
+            return ResponseEntity.ok(userService.getUser(id));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @PatchMapping("/{id}/role")
     public ResponseEntity<User> updateRole(
             @PathVariable String id,

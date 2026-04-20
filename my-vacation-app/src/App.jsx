@@ -288,6 +288,31 @@ function App() {
     }
   }, [user?.id])
 
+  // ── Silent profile refresh ─────────────────────────────────────────────────
+  // Runs once on mount. If an admin changed this user's role since their last
+  // login, the updated role is pulled from the DB and written back to state +
+  // localStorage — no logout required.
+  useEffect(() => {
+    if (!user?.id) return
+    axios.get(`${API}/api/users/${user.id}`)
+      .then(({ data }) => {
+        const refreshed = {
+          ...user,
+          role:          data.role,
+          entitledDays:  data.entitledDays,
+          remainingDays: data.remainingDays,
+          usedDays:      data.usedDays,
+          approverEmails: data.approverEmails,
+        }
+        // Only update state (and trigger a re-render) if something actually changed
+        if (JSON.stringify(refreshed) !== JSON.stringify(user)) {
+          localStorage.setItem('digileave_user', JSON.stringify(refreshed))
+          setUser(refreshed)
+        }
+      })
+      .catch(() => { /* keep the cached profile — backend may be starting up */ })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Admin functions ────────────────────────────────────────────────────────
 
   async function fetchAllUsers() {
@@ -375,7 +400,7 @@ function App() {
     if (user?.id && (user?.role === 'ADMIN' || user?.role === 'APPROVER')) {
       fetchPendingRequests(user.id)
     }
-  }, [user?.id, activeTab])
+  }, [user?.id, user?.role, activeTab])
 
   // ── Form handlers ──────────────────────────────────────────────────────────
 
