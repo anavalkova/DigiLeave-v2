@@ -16,11 +16,11 @@ const API = import.meta.env.VITE_API_BASE_URL
 // ─── Static data ─────────────────────────────────────────────────────────────
 
 const LEAVE_TYPE_LABELS = {
-  annual: 'Annual',
-  sick: 'Sick',
-  unpaid: 'Unpaid',
-  maternity: 'Maternity / Paternity',
-  compassionate: 'Compassionate',
+  annual:      'Annual Leave',
+  sick:        'Sick Leave',
+  unpaid:      'Unpaid Leave',
+  maternity:   'Maternity / Paternity',
+  home_office: 'Home Office',
 }
 
 // Holiday set kept in LeaveCalendar.jsx (single source of truth for frontend).
@@ -639,11 +639,11 @@ function App() {
                         className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                       >
                         <option value="" disabled>Select a leave type</option>
-                        <option value="annual">Annual</option>
-                        <option value="sick">Sick</option>
-                        <option value="unpaid">Unpaid</option>
+                        <option value="annual">Annual Leave</option>
+                        <option value="sick">Sick Leave</option>
+                        <option value="unpaid">Unpaid Leave</option>
                         <option value="maternity">Maternity / Paternity</option>
-                        <option value="compassionate">Compassionate</option>
+                        <option value="home_office">Home Office</option>
                       </select>
                     </div>
 

@@ -5,22 +5,20 @@ import { HOLIDAYS } from './LeaveCalendar'
 // ─── Type-based colour palette ────────────────────────────────────────────────
 
 const TYPE_COLORS = {
-  annual:        '#3b82f6', // blue   — paid leave
-  home_office:   '#94a3b8', // slate  — home office
-  sick:          '#ef4444', // red    — sick leave
-  maternity:     '#ec4899', // pink   — maternity / paternity
-  unpaid:        '#f59e0b', // amber  — unpaid
-  compassionate: '#8b5cf6', // violet — compassionate
+  annual:      '#3b82f6', // blue  — annual leave
+  home_office: '#94a3b8', // slate — home office
+  sick:        '#ef4444', // red   — sick leave
+  maternity:   '#ec4899', // pink  — maternity / paternity
+  unpaid:      '#f59e0b', // amber — unpaid
 }
 const FALLBACK_COLOR = '#6b7280'
 
 const TYPE_LABELS = {
-  annual:        'Paid Leave',
-  home_office:   'Home Office',
-  sick:          'Sick Leave',
-  maternity:     'Maternity / Paternity',
-  unpaid:        'Unpaid Leave',
-  compassionate: 'Compassionate Leave',
+  annual:      'Annual Leave',
+  home_office: 'Home Office',
+  sick:        'Sick Leave',
+  maternity:   'Maternity / Paternity',
+  unpaid:      'Unpaid Leave',
 }
 
 function typeColor(type) {
@@ -106,7 +104,6 @@ function DayDetail({ iso, events, onClose }) {
             <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
               <tr>
                 <th scope="col" className="px-5 py-2.5 text-left font-medium">Name</th>
-                <th scope="col" className="px-5 py-2.5 text-left font-medium">Email</th>
                 <th scope="col" className="px-5 py-2.5 text-left font-medium">Type</th>
                 <th scope="col" className="px-5 py-2.5 text-left font-medium whitespace-nowrap">Start</th>
                 <th scope="col" className="px-5 py-2.5 text-left font-medium whitespace-nowrap">End</th>
@@ -124,7 +121,6 @@ function DayDetail({ iso, events, onClose }) {
                       )}
                     </div>
                   </td>
-                  <td className="px-5 py-3 text-xs text-gray-500">{ev.userEmail}</td>
                   <td className="px-5 py-3">
                     <span
                       className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white"
@@ -210,12 +206,11 @@ function DayCell({ iso, dayNum, isToday, isWeekend, holiday, events, onClick }) 
 
 function Legend({ presentTypes }) {
   const universalItems = [
-    { key: 'annual',        label: 'Paid Leave' },
-    { key: 'home_office',   label: 'Home Office' },
-    { key: 'sick',          label: 'Sick Leave' },
-    { key: 'maternity',     label: 'Maternity / Paternity' },
-    { key: 'unpaid',        label: 'Unpaid Leave' },
-    { key: 'compassionate', label: 'Compassionate Leave' },
+    { key: 'annual',      label: 'Annual Leave' },
+    { key: 'home_office', label: 'Home Office' },
+    { key: 'sick',        label: 'Sick Leave' },
+    { key: 'maternity',   label: 'Maternity / Paternity' },
+    { key: 'unpaid',      label: 'Unpaid Leave' },
   ]
 
   return (

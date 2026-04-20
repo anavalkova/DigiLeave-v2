@@ -84,24 +84,30 @@ public class LeaveService {
                     "(all days are weekends or public holidays).");
         }
 
-        // ── 5. Balance check (entitled − approved − pending) ───────────────
+        // ── 5. Balance check — skipped for Home Office (unlimited entitlement) ─
         User user = userRepository.findById(dto.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
 
-        int approvedDays = leaveRequestRepository
-                .findByUserIdAndStatus(dto.getUserId(), LeaveStatus.APPROVED)
-                .stream().mapToInt(LeaveRequest::getTotalDays).sum();
+        if (!isHomeOffice(dto.getType())) {
+            int approvedDays = leaveRequestRepository
+                    .findByUserIdAndStatus(dto.getUserId(), LeaveStatus.APPROVED)
+                    .stream()
+                    .filter(r -> !isHomeOffice(r.getType()))
+                    .mapToInt(LeaveRequest::getTotalDays).sum();
 
-        int pendingDays = leaveRequestRepository
-                .findByUserIdAndStatus(dto.getUserId(), LeaveStatus.PENDING)
-                .stream().mapToInt(LeaveRequest::getTotalDays).sum();
+            int pendingDays = leaveRequestRepository
+                    .findByUserIdAndStatus(dto.getUserId(), LeaveStatus.PENDING)
+                    .stream()
+                    .filter(r -> !isHomeOffice(r.getType()))
+                    .mapToInt(LeaveRequest::getTotalDays).sum();
 
-        int availableDays = user.getEntitledDays() - approvedDays - pendingDays;
+            int availableDays = user.getEntitledDays() - approvedDays - pendingDays;
 
-        if (totalDays > availableDays) {
-            throw new IllegalArgumentException(
-                    "Request exceeds your available leave balance of " + availableDays + " day(s)." +
-                    " Note: days already pending count against your balance.");
+            if (totalDays > availableDays) {
+                throw new IllegalArgumentException(
+                        "Request exceeds your available leave balance of " + availableDays + " day(s)." +
+                        " Note: days already pending count against your balance.");
+            }
         }
 
         // ── 6. Save ────────────────────────────────────────────────────────
@@ -128,17 +134,24 @@ public class LeaveService {
 
         int entitledDays = user.getEntitledDays();
 
+        // Home Office requests don't count against entitlement
         int usedDays = leaveRequestRepository
                 .findByUserIdAndStatus(userId, LeaveStatus.APPROVED)
-                .stream().mapToInt(LeaveRequest::getTotalDays).sum();
+                .stream()
+                .filter(r -> !isHomeOffice(r.getType()))
+                .mapToInt(LeaveRequest::getTotalDays).sum();
 
         int pendingDays = leaveRequestRepository
                 .findByUserIdAndStatus(userId, LeaveStatus.PENDING)
-                .stream().mapToInt(LeaveRequest::getTotalDays).sum();
+                .stream()
+                .filter(r -> !isHomeOffice(r.getType()))
+                .mapToInt(LeaveRequest::getTotalDays).sum();
 
         int rejectedDays = leaveRequestRepository
                 .findByUserIdAndStatus(userId, LeaveStatus.REJECTED)
-                .stream().mapToInt(LeaveRequest::getTotalDays).sum();
+                .stream()
+                .filter(r -> !isHomeOffice(r.getType()))
+                .mapToInt(LeaveRequest::getTotalDays).sum();
 
         int remainingDays = entitledDays - usedDays;
 
@@ -161,11 +174,13 @@ public class LeaveService {
         boolean approvalStateChanged = oldStatus != newStatus &&
                 (oldStatus == LeaveStatus.APPROVED || newStatus == LeaveStatus.APPROVED);
 
-        if (approvalStateChanged) {
+        if (approvalStateChanged && !isHomeOffice(request.getType())) {
             userRepository.findById(request.getUserId()).ifPresent(user -> {
                 int approvedDays = leaveRequestRepository
                         .findByUserIdAndStatus(request.getUserId(), LeaveStatus.APPROVED)
-                        .stream().mapToInt(LeaveRequest::getTotalDays).sum();
+                        .stream()
+                        .filter(r -> !isHomeOffice(r.getType()))
+                        .mapToInt(LeaveRequest::getTotalDays).sum();
                 user.setRemainingDays(Math.max(0, user.getEntitledDays() - approvedDays));
                 user.setUsedDays(approvedDays);
                 userRepository.save(user);
@@ -192,18 +207,25 @@ public class LeaveService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "User associated with this request was not found."));
 
-        int days = request.getTotalDays();
-
-        user.setRemainingDays(Math.max(0, user.getRemainingDays() - days));
-        user.setUsedDays(user.getUsedDays() + days);
-
         request.setStatus(LeaveStatus.APPROVED);
 
-        userRepository.save(user);
+        // Home Office doesn't deduct from entitlement balance
+        if (!isHomeOffice(request.getType())) {
+            int days = request.getTotalDays();
+            user.setRemainingDays(Math.max(0, user.getRemainingDays() - days));
+            user.setUsedDays(user.getUsedDays() + days);
+            userRepository.save(user);
+        }
+
         return leaveRequestRepository.save(request);
     }
 
-    private static final ZoneId SOFIA = ZoneId.of("Europe/Sofia");
+    private static final ZoneId SOFIA       = ZoneId.of("Europe/Sofia");
+    private static final String HOME_OFFICE = "home_office";
+
+    private static boolean isHomeOffice(String type) {
+        return HOME_OFFICE.equalsIgnoreCase(type);
+    }
 
     /**
      * Cancels a leave request owned by requestingUserId.
@@ -236,8 +258,8 @@ public class LeaveService {
             throw new IllegalArgumentException("Rejected requests cannot be cancelled.");
         }
 
-        // Exact reversal of approval math — add totalDays back, subtract from usedDays
-        if (current == LeaveStatus.APPROVED) {
+        // Exact reversal of approval math — only for types that affect the balance
+        if (current == LeaveStatus.APPROVED && !isHomeOffice(request.getType())) {
             userRepository.findById(request.getUserId()).ifPresent(user -> {
                 user.setRemainingDays(user.getRemainingDays() + request.getTotalDays());
                 user.setUsedDays(Math.max(0, user.getUsedDays() - request.getTotalDays()));
@@ -266,8 +288,8 @@ public class LeaveService {
 
         request.setStatus(LeaveStatus.REJECTED);
 
-        // Reverse the approval math before saving the request
-        if (wasApproved && request.getUserId() != null) {
+        // Reverse the approval math — only for types that affect the balance
+        if (wasApproved && request.getUserId() != null && !isHomeOffice(request.getType())) {
             userRepository.findById(request.getUserId()).ifPresent(user -> {
                 user.setRemainingDays(user.getRemainingDays() + request.getTotalDays());
                 user.setUsedDays(Math.max(0, user.getUsedDays() - request.getTotalDays()));
