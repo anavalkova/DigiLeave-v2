@@ -5,6 +5,7 @@ import AdminPanel from './AdminPanel'
 import ApproverView from './ApproverView'
 import LeaveCalendar, { isoOf, HOLIDAYS } from './LeaveCalendar'
 import StatusBadge from './StatusBadge'
+import TeamCalendar from './TeamCalendar'
 import './App.css'
 
 // ─── API base URL ─────────────────────────────────────────────────────────────
@@ -464,8 +465,9 @@ function App() {
   const pendingCount = pendingRequests.filter((r) => r.status === 'PENDING').length
 
   const tabs = [
-    { id: 'request',   label: 'Request Leave' },
-    { id: 'history',   label: 'My Requests' },
+    { id: 'request',  label: 'Request Leave' },
+    { id: 'history',  label: 'My Requests' },
+    { id: 'team',     label: 'Team Calendar' },
     ...(canApprove ? [{ id: 'approvals', label: pendingCount > 0 ? `Approvals (${pendingCount})` : 'Approvals' }] : []),
     ...(user.role === 'ADMIN' ? [{ id: 'users', label: 'Users' }] : []),
   ]
@@ -747,6 +749,18 @@ function App() {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Team Calendar tab ──────────────────────────────────────── */}
+          {activeTab === 'team' && (
+            <div
+              id="tabpanel-team"
+              role="tabpanel"
+              aria-labelledby="tab-team"
+              className="p-6"
+            >
+              <TeamCalendar userId={user.id} api={API} />
             </div>
           )}
 

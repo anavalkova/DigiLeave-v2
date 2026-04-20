@@ -1,5 +1,6 @@
 package com.digileave.api.service;
 
+import com.digileave.api.dto.CalendarEventDto;
 import com.digileave.api.dto.LeaveRequestDto;
 import com.digileave.api.dto.LeaveSummaryDto;
 import com.digileave.api.dto.PendingRequestDto;
@@ -17,7 +18,11 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -313,6 +318,75 @@ public class LeaveService {
                             req.getRequestDate(),
                             req.getStatus()
                     );
+                })
+                .collect(Collectors.toList());
+    }
+
+    // ── Team calendar ─────────────────────────────────────────────────────────
+
+    /**
+     * Returns APPROVED and PENDING leave events that overlap with the given
+     * month, scoped to the set of users visible to the caller:
+     *   ADMIN    → everyone
+     *   APPROVER → themselves + their direct reports
+     *   USER     → themselves + teammates (users sharing at least one approver)
+     */
+    public List<CalendarEventDto> getCalendarEvents(String viewerId, int year, int month) {
+        User viewer = userRepository.findById(viewerId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found."));
+
+        List<User> visibleUsers = getVisibleUsers(viewer);
+        Set<String> visibleIds  = visibleUsers.stream()
+                .map(User::getId).collect(Collectors.toSet());
+        Map<String, User> userMap = visibleUsers.stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        LocalDate monthStart = LocalDate.of(year, month, 1);
+        LocalDate monthEnd   = monthStart.withDayOfMonth(monthStart.lengthOfMonth());
+
+        return leaveRequestRepository.findAll().stream()
+                .filter(r -> r.getUserId() != null && visibleIds.contains(r.getUserId()))
+                .filter(r -> r.getStatus() == LeaveStatus.APPROVED
+                          || r.getStatus() == LeaveStatus.PENDING)
+                .filter(r -> !r.getEndDate().isBefore(monthStart)
+                          && !r.getStartDate().isAfter(monthEnd))
+                .map(r -> {
+                    User u    = userMap.get(r.getUserId());
+                    String nm = u != null ? u.getName() : "Unknown";
+                    return new CalendarEventDto(
+                            r.getId(), r.getUserId(), nm,
+                            r.getStartDate(), r.getEndDate(),
+                            r.getType(), r.getStatus().name());
+                })
+                .collect(Collectors.toList());
+    }
+
+    private List<User> getVisibleUsers(User viewer) {
+        List<User> all = userRepository.findAll();
+
+        if (viewer.getRole() == Role.ADMIN) {
+            return all;
+        }
+
+        if (viewer.getRole() == Role.APPROVER) {
+            String viewerEmail = viewer.getEmail();
+            return all.stream()
+                    .filter(u -> u.getId().equals(viewer.getId()) ||
+                            (u.getApproverEmails() != null &&
+                             u.getApproverEmails().contains(viewerEmail)))
+                    .collect(Collectors.toList());
+        }
+
+        // USER / ACCOUNTANT / others: see teammates — people who share an approver
+        Set<String> myApprovers = viewer.getApproverEmails() != null
+                ? new HashSet<>(viewer.getApproverEmails())
+                : Collections.emptySet();
+
+        return all.stream()
+                .filter(u -> {
+                    if (u.getId().equals(viewer.getId())) return true;
+                    if (u.getApproverEmails() == null || u.getApproverEmails().isEmpty()) return false;
+                    return u.getApproverEmails().stream().anyMatch(myApprovers::contains);
                 })
                 .collect(Collectors.toList());
     }

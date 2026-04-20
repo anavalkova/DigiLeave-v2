@@ -1,5 +1,6 @@
 package com.digileave.api.controller;
 
+import com.digileave.api.dto.CalendarEventDto;
 import com.digileave.api.dto.LeaveRequestDto;
 import com.digileave.api.dto.LeaveSummaryDto;
 import com.digileave.api.dto.PendingRequestDto;
@@ -40,6 +41,18 @@ public class LeaveController {
     public ResponseEntity<LeaveSummaryDto> getSummary(@PathVariable String userId) {
         try {
             return ResponseEntity.ok(leaveService.getUserLeaveSummary(userId));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @GetMapping("/calendar")
+    public ResponseEntity<List<CalendarEventDto>> getCalendarEvents(
+            @RequestParam String viewerId,
+            @RequestParam int year,
+            @RequestParam int month) {
+        try {
+            return ResponseEntity.ok(leaveService.getCalendarEvents(viewerId, year, month));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }
