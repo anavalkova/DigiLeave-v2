@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react' // useEffect used by main component
 import axios from 'axios'
 import { HOLIDAYS } from './LeaveCalendar'
 
@@ -63,111 +63,84 @@ function firstDayOffset(year, month) {
   return raw === 0 ? 6 : raw - 1
 }
 
-// ─── Day-detail slide-over ────────────────────────────────────────────────────
+// ─── Day-detail inline section ────────────────────────────────────────────────
 
 function DayDetail({ iso, events, onClose }) {
   const holiday = HOLIDAYS[iso]
-  const date    = fmtDate(iso)
-
-  // Trap focus and close on Escape
-  useEffect(() => {
-    function handleKey(e) { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [onClose])
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true" aria-label={`Leave details for ${date}`}>
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/30 transition-opacity"
-        onClick={onClose}
-      />
-
-      {/* Panel */}
-      <div className="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col bg-white shadow-2xl">
-
-        {/* Header */}
-        <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Selected date</p>
-            <h2 className="mt-0.5 text-base font-semibold text-gray-900">{date}</h2>
-            {holiday && (
-              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
-                🎉 {holiday}
-              </span>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close panel"
-            className="ml-4 flex h-8 w-8 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          {events.length === 0 ? (
-            <div className="py-12 text-center">
-              <p className="text-sm font-medium text-gray-500">No leave requests on this day.</p>
-              {holiday && (
-                <p className="mt-1 text-xs text-gray-400">This is a public holiday.</p>
-              )}
-            </div>
-          ) : (
-            <>
-              <p className="mb-3 text-xs text-gray-500">
-                {events.length} {events.length === 1 ? 'person' : 'people'} away
-              </p>
-              <div className="overflow-x-auto rounded-lg border border-gray-200">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
-                    <tr>
-                      <th scope="col" className="px-4 py-2.5 text-left font-medium">Name</th>
-                      <th scope="col" className="px-4 py-2.5 text-left font-medium">Email</th>
-                      <th scope="col" className="px-4 py-2.5 text-left font-medium">Type</th>
-                      <th scope="col" className="px-4 py-2.5 text-left font-medium whitespace-nowrap">Start</th>
-                      <th scope="col" className="px-4 py-2.5 text-left font-medium whitespace-nowrap">End</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {events.map(ev => (
-                      <tr key={ev.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="h-2.5 w-2.5 flex-shrink-0 rounded-sm"
-                              style={{ backgroundColor: typeColor(ev.type) }}
-                            />
-                            <span className="font-medium text-gray-800">{ev.userName}</span>
-                          </div>
-                          {ev.status === 'PENDING' && (
-                            <span className="ml-4 text-[10px] font-medium text-amber-600">(pending)</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-gray-500 text-xs">{ev.userEmail}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white"
-                            style={{ backgroundColor: typeColor(ev.type), opacity: ev.status === 'PENDING' ? 0.7 : 1 }}
-                          >
-                            {typeLabel(ev.type)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-gray-600 text-xs">{fmtShort(ev.start)}</td>
-                        <td className="px-4 py-3 whitespace-nowrap text-gray-600 text-xs">{fmtShort(ev.end)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
+    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-5 py-3">
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-semibold text-gray-800">{fmtDate(iso)}</h3>
+          {holiday && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
+              {holiday}
+            </span>
+          )}
+          {events.length > 0 && (
+            <span className="text-xs text-gray-400">
+              {events.length} {events.length === 1 ? 'person' : 'people'} away
+            </span>
           )}
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Clear selection"
+          className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          Clear ✕
+        </button>
       </div>
+
+      {/* Body */}
+      {events.length === 0 ? (
+        <p className="px-5 py-6 text-sm text-gray-500">
+          No leave requests on this day.{holiday ? ' This is a public holiday.' : ''}
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+              <tr>
+                <th scope="col" className="px-5 py-2.5 text-left font-medium">Name</th>
+                <th scope="col" className="px-5 py-2.5 text-left font-medium">Email</th>
+                <th scope="col" className="px-5 py-2.5 text-left font-medium">Type</th>
+                <th scope="col" className="px-5 py-2.5 text-left font-medium whitespace-nowrap">Start</th>
+                <th scope="col" className="px-5 py-2.5 text-left font-medium whitespace-nowrap">End</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {events.map(ev => (
+                <tr key={ev.id} className="hover:bg-gray-50">
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 flex-shrink-0 rounded-sm" style={{ backgroundColor: typeColor(ev.type) }} />
+                      <span className="font-medium text-gray-800">{ev.userName}</span>
+                      {ev.status === 'PENDING' && (
+                        <span className="text-[10px] font-medium text-amber-600">(pending)</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3 text-xs text-gray-500">{ev.userEmail}</td>
+                  <td className="px-5 py-3">
+                    <span
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white"
+                      style={{ backgroundColor: typeColor(ev.type), opacity: ev.status === 'PENDING' ? 0.7 : 1 }}
+                    >
+                      {typeLabel(ev.type)}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3 whitespace-nowrap text-xs text-gray-600">{fmtShort(ev.start)}</td>
+                  <td className="px-5 py-3 whitespace-nowrap text-xs text-gray-600">{fmtShort(ev.end)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
