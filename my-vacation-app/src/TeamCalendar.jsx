@@ -1,190 +1,269 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import axios from 'axios'
 import { HOLIDAYS } from './LeaveCalendar'
 
-// ─── Color palette (deterministic per userId) ─────────────────────────────────
+// ─── Type-based colour palette ────────────────────────────────────────────────
 
-const PALETTE = [
-  '#3b82f6', // blue
-  '#10b981', // emerald
-  '#f97316', // orange
-  '#8b5cf6', // violet
-  '#06b6d4', // cyan
-  '#f59e0b', // amber
-  '#84cc16', // lime
-  '#ec4899', // pink
-  '#6366f1', // indigo
-  '#14b8a6', // teal
-]
+const TYPE_COLORS = {
+  annual:        '#3b82f6', // blue   — paid leave
+  home_office:   '#94a3b8', // slate  — home office
+  sick:          '#ef4444', // red    — sick leave
+  maternity:     '#ec4899', // pink   — maternity / paternity
+  unpaid:        '#f59e0b', // amber  — unpaid
+  compassionate: '#8b5cf6', // violet — compassionate
+}
+const FALLBACK_COLOR = '#6b7280'
 
-/** Home Office is always this muted slate — distinct from all personal colours. */
-const HOME_OFFICE_COLOR = '#94a3b8'
-
-function userColor(userId) {
-  let h = 0
-  for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0
-  return PALETTE[h % PALETTE.length]
+const TYPE_LABELS = {
+  annual:        'Paid Leave',
+  home_office:   'Home Office',
+  sick:          'Sick Leave',
+  maternity:     'Maternity / Paternity',
+  unpaid:        'Unpaid Leave',
+  compassionate: 'Compassionate Leave',
 }
 
-function eventColor(ev) {
-  return ev.type === 'home_office' ? HOME_OFFICE_COLOR : userColor(ev.userId)
+function typeColor(type) {
+  return TYPE_COLORS[type?.toLowerCase()] ?? FALLBACK_COLOR
 }
 
-// ─── Initials with collision detection ───────────────────────────────────────
-
-/**
- * Given a flat list of calendar events, returns a map of userId → initials.
- * Default: "Jane Doe" → "JD" (2 chars).
- * Collision: two people share the same 2-char initials → expand to 3 chars
- *   using the first 2 letters of the first name + first letter of the last name.
- */
-function buildInitialsMap(events) {
-  const userNames = {}
-  events.forEach(e => { if (!userNames[e.userId]) userNames[e.userId] = e.userName })
-  const users = Object.entries(userNames).map(([userId, userName]) => ({ userId, userName }))
-
-  const firstPass = {}
-  users.forEach(({ userId, userName }) => {
-    const parts = userName.trim().split(/\s+/).filter(Boolean)
-    firstPass[userId] = parts.length >= 2
-      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-      : parts[0].slice(0, 2).toUpperCase()
-  })
-
-  const counts = {}
-  Object.values(firstPass).forEach(i => { counts[i] = (counts[i] || 0) + 1 })
-
-  const result = {}
-  users.forEach(({ userId, userName }) => {
-    const ini = firstPass[userId]
-    if (counts[ini] > 1) {
-      const parts = userName.trim().split(/\s+/).filter(Boolean)
-      result[userId] = parts.length >= 2
-        ? (parts[0].slice(0, 2) + parts[parts.length - 1][0]).toUpperCase()
-        : parts[0].slice(0, 3).toUpperCase()
-    } else {
-      result[userId] = ini
-    }
-  })
-  return result
+function typeLabel(type) {
+  return TYPE_LABELS[type?.toLowerCase()] ?? type ?? '—'
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Calendar helpers ─────────────────────────────────────────────────────────
 
 const MONTH_NAMES = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
 ]
-const DAY_LABELS = ['Mo','Tu','We','Th','Fr','Sa','Su']
+const DAY_LABELS  = ['Mo','Tu','We','Th','Fr','Sa','Su']
 
 function isoOf(y, m, d) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
-/** Monday-first offset (0 = Mon, 6 = Sun). */
+function fmtDate(iso) {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  })
+}
+
+function fmtShort(iso) {
+  if (!iso) return '—'
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric',
+  })
+}
+
 function firstDayOffset(year, month) {
   const raw = new Date(year, month, 1).getDay()
   return raw === 0 ? 6 : raw - 1
 }
 
-// ─── Event chip ───────────────────────────────────────────────────────────────
+// ─── Day-detail slide-over ────────────────────────────────────────────────────
 
-function EventChip({ label, color, title, faded }) {
+function DayDetail({ iso, events, onClose }) {
+  const holiday = HOLIDAYS[iso]
+  const date    = fmtDate(iso)
+
+  // Trap focus and close on Escape
+  useEffect(() => {
+    function handleKey(e) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
   return (
-    <span
-      title={title}
-      style={{ backgroundColor: color, opacity: faded ? 0.55 : 1 }}
-      className="flex items-center justify-center rounded px-1 text-[10px] font-bold text-white leading-[14px] truncate cursor-default select-none"
-    >
-      {label}
-    </span>
+    <div className="fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true" aria-label={`Leave details for ${date}`}>
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/30 transition-opacity"
+        onClick={onClose}
+      />
+
+      {/* Panel */}
+      <div className="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col bg-white shadow-2xl">
+
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Selected date</p>
+            <h2 className="mt-0.5 text-base font-semibold text-gray-900">{date}</h2>
+            {holiday && (
+              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                🎉 {holiday}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close panel"
+            className="ml-4 flex h-8 w-8 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {events.length === 0 ? (
+            <div className="py-12 text-center">
+              <p className="text-sm font-medium text-gray-500">No leave requests on this day.</p>
+              {holiday && (
+                <p className="mt-1 text-xs text-gray-400">This is a public holiday.</p>
+              )}
+            </div>
+          ) : (
+            <>
+              <p className="mb-3 text-xs text-gray-500">
+                {events.length} {events.length === 1 ? 'person' : 'people'} away
+              </p>
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+                    <tr>
+                      <th scope="col" className="px-4 py-2.5 text-left font-medium">Name</th>
+                      <th scope="col" className="px-4 py-2.5 text-left font-medium">Email</th>
+                      <th scope="col" className="px-4 py-2.5 text-left font-medium">Type</th>
+                      <th scope="col" className="px-4 py-2.5 text-left font-medium whitespace-nowrap">Start</th>
+                      <th scope="col" className="px-4 py-2.5 text-left font-medium whitespace-nowrap">End</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {events.map(ev => (
+                      <tr key={ev.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="h-2.5 w-2.5 flex-shrink-0 rounded-sm"
+                              style={{ backgroundColor: typeColor(ev.type) }}
+                            />
+                            <span className="font-medium text-gray-800">{ev.userName}</span>
+                          </div>
+                          {ev.status === 'PENDING' && (
+                            <span className="ml-4 text-[10px] font-medium text-amber-600">(pending)</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-gray-500 text-xs">{ev.userEmail}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white"
+                            style={{ backgroundColor: typeColor(ev.type), opacity: ev.status === 'PENDING' ? 0.7 : 1 }}
+                          >
+                            {typeLabel(ev.type)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-gray-600 text-xs">{fmtShort(ev.start)}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-gray-600 text-xs">{fmtShort(ev.end)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
-// ─── Day cell with overflow popover ──────────────────────────────────────────
+// ─── Day cell ─────────────────────────────────────────────────────────────────
 
-const MAX_VISIBLE = 3
+const MAX_CHIPS = 3
 
-function DayCell({ iso, dayNum, isToday, isWeekend, holiday, events, initialsMap }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef(null)
-
-  useEffect(() => {
-    if (!open) return
-    function handle(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [open])
-
-  const visible  = events.slice(0, MAX_VISIBLE)
-  const overflow = events.length - MAX_VISIBLE
+function DayCell({ iso, dayNum, isToday, isWeekend, holiday, events, onClick }) {
+  const visible  = events.slice(0, MAX_CHIPS)
+  const overflow = events.length - MAX_CHIPS
+  const clickable = events.length > 0 || !!holiday
 
   return (
     <div
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-label={clickable ? `${iso}, ${events.length} requests${holiday ? ', ' + holiday : ''}` : undefined}
+      onClick={clickable ? () => onClick(iso) : undefined}
+      onKeyDown={clickable ? e => (e.key === 'Enter' || e.key === ' ') && onClick(iso) : undefined}
       className={[
-        'relative border-t border-gray-100 p-1 min-h-[76px]',
+        'border-t border-gray-100 p-1 min-h-[76px] transition-colors',
         isWeekend || holiday ? 'bg-gray-50' : 'bg-white',
         isToday ? 'ring-1 ring-inset ring-blue-400' : '',
+        clickable ? 'cursor-pointer hover:bg-blue-50' : '',
       ].join(' ')}
     >
       {/* Day number */}
       <p className={[
-        'text-[11px] font-semibold mb-0.5 leading-none',
-        isToday     ? 'text-blue-600' :
-        holiday     ? 'text-amber-600' :
-        isWeekend   ? 'text-gray-300' :
-                      'text-gray-500',
+        'text-[11px] font-semibold mb-0.5 leading-none select-none',
+        isToday   ? 'text-blue-600' :
+        holiday   ? 'text-amber-600' :
+        isWeekend ? 'text-gray-300' :
+                    'text-gray-500',
       ].join(' ')}>
         {dayNum}
         {holiday && <span className="ml-0.5 text-amber-400" title={holiday}>●</span>}
       </p>
 
-      {/* Chips */}
+      {/* Event chips — colour by type */}
       <div className="flex flex-col gap-0.5">
         {visible.map(ev => (
-          <EventChip
+          <span
             key={ev.id}
-            label={initialsMap[ev.userId] ?? ev.userName.slice(0, 2).toUpperCase()}
-            color={eventColor(ev)}
-            title={`${ev.userName} · ${ev.type.replace('_', ' ')}${ev.status === 'PENDING' ? ' (pending)' : ''}`}
-            faded={ev.status === 'PENDING'}
-          />
+            title={`${ev.userName} · ${typeLabel(ev.type)}`}
+            style={{
+              backgroundColor: typeColor(ev.type),
+              opacity: ev.status === 'PENDING' ? 0.55 : 1,
+            }}
+            className="block truncate rounded px-1 text-[10px] font-medium text-white leading-[14px] select-none"
+          >
+            {ev.userName.split(' ')[0]}
+          </span>
         ))}
 
         {overflow > 0 && (
-          <div className="relative" ref={ref}>
-            <button
-              type="button"
-              onClick={() => setOpen(v => !v)}
-              className="text-[10px] font-medium text-blue-600 hover:underline leading-[14px] text-left"
-            >
-              +{overflow} more
-            </button>
-
-            {open && (
-              <div className="absolute z-40 top-full left-0 mt-1 w-48 rounded-lg bg-white shadow-lg border border-gray-200 p-2 space-y-1">
-                <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100 pb-1">
-                  All absent — {iso}
-                </p>
-                {events.map(ev => (
-                  <div key={ev.id} className="flex items-center gap-1.5 text-xs">
-                    <span
-                      className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                      style={{ backgroundColor: eventColor(ev), opacity: ev.status === 'PENDING' ? 0.55 : 1 }}
-                    />
-                    <span className="text-gray-700 truncate">{ev.userName}</span>
-                    {ev.status === 'PENDING' && (
-                      <span className="text-gray-400 flex-shrink-0 text-[10px]">(pending)</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <span className="text-[10px] font-medium text-blue-600 leading-[14px] select-none">
+            +{overflow} more
+          </span>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── Legend ───────────────────────────────────────────────────────────────────
+
+function Legend({ presentTypes }) {
+  const universalItems = [
+    { key: 'annual',        label: 'Paid Leave' },
+    { key: 'home_office',   label: 'Home Office' },
+    { key: 'sick',          label: 'Sick Leave' },
+    { key: 'maternity',     label: 'Maternity / Paternity' },
+    { key: 'unpaid',        label: 'Unpaid Leave' },
+    { key: 'compassionate', label: 'Compassionate Leave' },
+  ]
+
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-600 pt-1">
+      {universalItems
+        .filter(item => presentTypes.has(item.key))
+        .map(item => (
+          <span key={item.key} className="flex items-center gap-1.5">
+            <span className="h-3 w-3 flex-shrink-0 rounded-sm" style={{ backgroundColor: TYPE_COLORS[item.key] }} />
+            {item.label}
+          </span>
+        ))
+      }
+      <span className="flex items-center gap-1.5 text-amber-600">
+        <span className="text-amber-400">●</span>
+        Public Holiday
+      </span>
+      <span className="flex items-center gap-1.5 text-gray-400">
+        <span className="h-3 w-3 flex-shrink-0 rounded-sm bg-blue-400 opacity-55" />
+        Pending
+      </span>
     </div>
   )
 }
@@ -195,11 +274,12 @@ export default function TeamCalendar({ userId, api }) {
   const today    = useMemo(() => new Date(), [])
   const todayIso = isoOf(today.getFullYear(), today.getMonth(), today.getDate())
 
-  const [viewYear,  setViewYear]  = useState(today.getFullYear())
-  const [viewMonth, setViewMonth] = useState(today.getMonth())
-  const [events,    setEvents]    = useState([])
-  const [loading,   setLoading]   = useState(false)
-  const [error,     setError]     = useState('')
+  const [viewYear,     setViewYear]     = useState(today.getFullYear())
+  const [viewMonth,    setViewMonth]    = useState(today.getMonth())
+  const [events,       setEvents]       = useState([])
+  const [loading,      setLoading]      = useState(false)
+  const [error,        setError]        = useState('')
+  const [selectedDay,  setSelectedDay]  = useState(null)
 
   useEffect(() => {
     if (!userId) return
@@ -214,9 +294,7 @@ export default function TeamCalendar({ userId, api }) {
       .finally(() => setLoading(false))
   }, [userId, viewYear, viewMonth, api])
 
-  const initialsMap = useMemo(() => buildInitialsMap(events), [events])
-
-  /** Expand each event across every day it covers → day-keyed lookup. */
+  /** Expand each event across every day it covers → iso → [events] */
   const eventsByDay = useMemo(() => {
     const map = {}
     events.forEach(ev => {
@@ -234,6 +312,13 @@ export default function TeamCalendar({ userId, api }) {
     return map
   }, [events])
 
+  /** Types present this month — drives which legend entries to show */
+  const presentTypes = useMemo(() => {
+    const s = new Set()
+    events.forEach(e => s.add(e.type?.toLowerCase()))
+    return s
+  }, [events])
+
   function prevMonth() {
     if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11) }
     else setViewMonth(m => m - 1)
@@ -246,36 +331,25 @@ export default function TeamCalendar({ userId, api }) {
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate()
   const offset      = firstDayOffset(viewYear, viewMonth)
 
-  // Legend: unique users who appear this month
-  const legendUsers = useMemo(() => {
-    const seen = {}
-    events.forEach(e => { if (!seen[e.userId]) seen[e.userId] = e.userName })
-    return Object.entries(seen).map(([id, name]) => ({ id, name }))
-  }, [events])
-
-  const hasHomeOffice = events.some(e => e.type === 'home_office')
+  const selectedDayEvents = selectedDay ? (eventsByDay[selectedDay] ?? []) : []
 
   return (
     <div className="space-y-4">
 
       {/* ── Month navigation ──────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={prevMonth}
-          aria-label="Previous month"
-          className="w-8 h-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 text-lg leading-none"
-        >‹</button>
+        <button type="button" onClick={prevMonth} aria-label="Previous month"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 text-lg leading-none">
+          ‹
+        </button>
         <h3 className="w-44 text-center text-sm font-semibold text-gray-800">
           {MONTH_NAMES[viewMonth]} {viewYear}
         </h3>
-        <button
-          type="button"
-          onClick={nextMonth}
-          aria-label="Next month"
-          className="w-8 h-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 text-lg leading-none"
-        >›</button>
-        {loading && <span className="text-xs text-gray-400 ml-1">Loading…</span>}
+        <button type="button" onClick={nextMonth} aria-label="Next month"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 text-lg leading-none">
+          ›
+        </button>
+        {loading && <span className="ml-1 text-xs text-gray-400">Loading…</span>}
       </div>
 
       {error && (
@@ -285,15 +359,11 @@ export default function TeamCalendar({ userId, api }) {
       )}
 
       {/* ── Grid ─────────────────────────────────────────────────────── */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden">
-
+      <div className="overflow-hidden rounded-xl border border-gray-200">
         {/* Day-of-week header */}
-        <div className="grid grid-cols-7 bg-gray-50 border-b border-gray-200">
+        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
           {DAY_LABELS.map((d, i) => (
-            <div
-              key={d}
-              className={`py-2 text-center text-xs font-medium ${i >= 5 ? 'text-gray-300' : 'text-gray-500'}`}
-            >
+            <div key={d} className={`py-2 text-center text-xs font-medium ${i >= 5 ? 'text-gray-300' : 'text-gray-500'}`}>
               {d}
             </div>
           ))}
@@ -301,27 +371,23 @@ export default function TeamCalendar({ userId, api }) {
 
         {/* Cells */}
         <div className="grid grid-cols-7">
-          {/* Leading blank cells */}
           {Array.from({ length: offset }).map((_, i) => (
-            <div key={`b${i}`} className="border-t border-gray-100 bg-gray-50 min-h-[76px]" />
+            <div key={`b${i}`} className="min-h-[76px] border-t border-gray-100 bg-gray-50" />
           ))}
-
-          {/* Day cells */}
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const day     = i + 1
             const iso     = isoOf(viewYear, viewMonth, day)
             const dow     = new Date(viewYear, viewMonth, day).getDay()
-            const weekend = dow === 0 || dow === 6
             return (
               <DayCell
                 key={iso}
                 iso={iso}
                 dayNum={day}
                 isToday={iso === todayIso}
-                isWeekend={weekend}
+                isWeekend={dow === 0 || dow === 6}
                 holiday={HOLIDAYS[iso] ?? null}
                 events={eventsByDay[iso] ?? []}
-                initialsMap={initialsMap}
+                onClick={setSelectedDay}
               />
             )
           })}
@@ -329,33 +395,15 @@ export default function TeamCalendar({ userId, api }) {
       </div>
 
       {/* ── Legend ───────────────────────────────────────────────────── */}
-      {legendUsers.length > 0 ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-600 pt-1">
-          {legendUsers.map(u => (
-            <span key={u.id} className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: userColor(u.id) }} />
-              {u.name}
-            </span>
-          ))}
-          {hasHomeOffice && (
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: HOME_OFFICE_COLOR }} />
-              Home Office
-            </span>
-          )}
-          <span className="flex items-center gap-1.5 text-amber-600">
-            <span className="text-amber-400">●</span>
-            Public Holiday
-          </span>
-          <span className="flex items-center gap-1.5 text-gray-400">
-            <span className="w-3 h-3 rounded-sm bg-blue-400 opacity-55" />
-            Pending
-          </span>
-        </div>
-      ) : !loading && (
-        <p className="text-sm text-gray-400 text-center py-4">
-          No approved leave in {MONTH_NAMES[viewMonth]} {viewYear} for your team.
-        </p>
+      {!loading && <Legend presentTypes={presentTypes} />}
+
+      {/* ── Day-detail slide-over ─────────────────────────────────── */}
+      {selectedDay && (
+        <DayDetail
+          iso={selectedDay}
+          events={selectedDayEvents}
+          onClose={() => setSelectedDay(null)}
+        />
       )}
     </div>
   )

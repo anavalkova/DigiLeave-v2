@@ -352,10 +352,11 @@ public class LeaveService {
                 .filter(r -> !r.getEndDate().isBefore(monthStart)
                           && !r.getStartDate().isAfter(monthEnd))
                 .map(r -> {
-                    User u    = userMap.get(r.getUserId());
-                    String nm = u != null ? u.getName() : "Unknown";
+                    User u      = userMap.get(r.getUserId());
+                    String nm   = u != null ? u.getName()  : "Unknown";
+                    String mail = u != null ? u.getEmail() : "";
                     return new CalendarEventDto(
-                            r.getId(), r.getUserId(), nm,
+                            r.getId(), r.getUserId(), nm, mail,
                             r.getStartDate(), r.getEndDate(),
                             r.getType(), r.getStatus().name());
                 })
