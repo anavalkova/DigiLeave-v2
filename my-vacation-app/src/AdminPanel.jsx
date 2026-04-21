@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
+import Pagination, { PAGE_SIZE, SortableTh } from './Pagination'
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -150,6 +151,8 @@ export default function AdminPanel({
   const [saveError, setSaveError]   = useState({})
   const [toast, setToast]           = useState(null)       // { message, type }
   const [approverWarn, setApproverWarn] = useState(null)   // userId pending confirmation
+  const [page, setPage]             = useState(1)
+  const [userSort, setUserSort]     = useState({ key: 'name', dir: 'asc' })
 
   // ── Derived: managers list reflects pending role changes, not just saved state ──
   // When you change a user's role to APPROVER in the dropdown (before saving),
@@ -158,6 +161,30 @@ export default function AdminPanel({
     const effectiveRole = rowEdits[u.id]?.role ?? u.role ?? 'USER'
     return effectiveRole === 'ADMIN' || effectiveRole === 'APPROVER'
   })
+
+  // Users sorted by chosen column; paginated
+  const sortedUsers = useMemo(() => {
+    const { key, dir } = userSort
+    return [...allUsers].sort((a, b) => {
+      let cmp
+      if (key === 'entitledDays') {
+        cmp = Number(a[key] ?? 0) - Number(b[key] ?? 0)
+      } else {
+        cmp = String(a[key] ?? '').localeCompare(String(b[key] ?? ''))
+      }
+      return dir === 'asc' ? cmp : -cmp
+    })
+  }, [allUsers, userSort])
+  const pagedUsers = sortedUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  function handleUserSort(key) {
+    setUserSort(prev =>
+      prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: 'asc' }
+    )
+    setPage(1)
+  }
 
   function get(userId, field, fallback) {
     return rowEdits[userId]?.[field] ?? fallback
@@ -242,16 +269,16 @@ export default function AdminPanel({
           <table className="w-full text-sm text-left text-gray-700">
             <thead>
               <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
-                <th scope="col" className="py-3 pr-4 font-medium">Name</th>
-                <th scope="col" className="py-3 pr-4 font-medium">Email</th>
-                <th scope="col" className="py-3 pr-4 font-medium">Role</th>
+                <SortableTh label="Name"          colKey="name"         sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
+                <SortableTh label="Email"         colKey="email"        sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
+                <SortableTh label="Role"          colKey="role"         sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
                 <th scope="col" className="py-3 pr-4 font-medium">Managers</th>
-                <th scope="col" className="py-3 pr-4 font-medium">Entitled Days</th>
+                <SortableTh label="Entitled Days" colKey="entitledDays" sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
                 <th scope="col" className="py-3 font-medium"><span className="sr-only">Save</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {allUsers.map((u) => {
+              {pagedUsers.map((u) => {
                 const dirty            = isDirty(u.id)
                 const isSaving         = saving[u.id] ?? false
                 const error            = saveError[u.id]
@@ -357,6 +384,12 @@ export default function AdminPanel({
               })}
             </tbody>
           </table>
+          <Pagination
+            page={page}
+            total={sortedUsers.length}
+            pageSize={PAGE_SIZE}
+            onChange={setPage}
+          />
         </div>
       )}
     </div>

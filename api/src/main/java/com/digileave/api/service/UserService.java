@@ -6,10 +6,13 @@ import com.digileave.api.model.Role;
 import com.digileave.api.model.User;
 import com.digileave.api.repository.LeaveRequestRepository;
 import com.digileave.api.repository.UserRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class UserService {
@@ -46,6 +49,31 @@ public class UserService {
         sanitised.remove(user.getEmail()); // users must not be their own approver
         user.setApproverEmails(sanitised);
         return userRepository.save(user);
+    }
+
+    /**
+     * Returns the users visible to the requester:
+     *   ADMIN    → all users
+     *   APPROVER → only users who list the requester's email as an approver
+     *   Others   → 403
+     */
+    public List<User> getManagedUsers(String requesterId) {
+        User requester = userRepository.findById(requesterId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found."));
+
+        if (requester.getRole() == Role.ADMIN) {
+            return userRepository.findAll();
+        }
+
+        if (requester.getRole() == Role.APPROVER) {
+            String email = requester.getEmail();
+            return userRepository.findAll().stream()
+                    .filter(u -> u.getApproverEmails() != null
+                              && u.getApproverEmails().contains(email))
+                    .collect(Collectors.toList());
+        }
+
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied.");
     }
 
     public User updateEntitlement(String userId, int entitledDays) {

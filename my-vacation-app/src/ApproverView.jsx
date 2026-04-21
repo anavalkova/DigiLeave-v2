@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react'
 import StatusBadge from './StatusBadge'
+import Pagination, { PAGE_SIZE, SortableTh, sortRequests } from './Pagination'
 
 /** Format ISO date string as "3 Feb 2026" */
 function fmtDate(iso) {
@@ -13,6 +15,21 @@ function fmtDate(iso) {
  * Shows ALL requests (all statuses). Approve/Reject actions only appear on PENDING rows.
  */
 export default function ApproverView({ requests, loading, onApprove, onReject }) {
+  const [page, setPage]   = useState(1)
+  const [sort, setSort]   = useState({ key: 'startDate', dir: 'desc' })
+
+  // Reset to first page whenever the requests list changes
+  useEffect(() => { setPage(1) }, [requests])
+
+  function handleSort(key) {
+    setSort(prev =>
+      prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: 'desc' }
+    )
+    setPage(1)
+  }
+
   if (loading) {
     return <p className="text-sm text-gray-500 py-8 text-center">Loading requests…</p>
   }
@@ -26,23 +43,36 @@ export default function ApproverView({ requests, loading, onApprove, onReject })
     )
   }
 
+  const sorted = sortRequests(requests, sort.key, sort.dir)
+  const paged  = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  const th = (label, colKey) => (
+    <SortableTh
+      label={label}
+      colKey={colKey}
+      sortKey={sort.key}
+      sortDir={sort.dir}
+      onSort={handleSort}
+    />
+  )
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm text-left text-gray-700">
         <thead>
           <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
-            <th scope="col" className="py-3 pr-4 font-medium">Employee</th>
-            <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">Requested</th>
-            <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">Start</th>
-            <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">End</th>
-            <th scope="col" className="py-3 pr-4 font-medium">Days</th>
-            <th scope="col" className="py-3 pr-4 font-medium">Type</th>
-            <th scope="col" className="py-3 pr-4 font-medium">Status</th>
+            {th('Employee',  'userName')}
+            {th('Requested', 'requestDate')}
+            {th('Start',     'startDate')}
+            {th('End',       'endDate')}
+            {th('Days',      'totalDays')}
+            {th('Type',      'type')}
+            {th('Status',    'status')}
             <th scope="col" className="py-3 font-medium"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {requests.map((req) => {
+          {paged.map((req) => {
             const isPending = req.status === 'PENDING'
             return (
               <tr key={req.id} className="hover:bg-gray-50 transition-colors">
@@ -89,6 +119,7 @@ export default function ApproverView({ requests, loading, onApprove, onReject })
           })}
         </tbody>
       </table>
+      <Pagination page={page} total={sorted.length} pageSize={PAGE_SIZE} onChange={setPage} />
     </div>
   )
 }

@@ -204,7 +204,7 @@ function DayCell({ iso, dayNum, isToday, isWeekend, holiday, events, onClick }) 
 
 // ─── Legend ───────────────────────────────────────────────────────────────────
 
-function Legend({ presentTypes }) {
+function Legend() {
   const universalItems = [
     { key: 'annual',      label: 'Annual Leave' },
     { key: 'home_office', label: 'Home Office' },
@@ -216,7 +216,6 @@ function Legend({ presentTypes }) {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-600 pt-1">
       {universalItems
-        .filter(item => presentTypes.has(item.key))
         .map(item => (
           <span key={item.key} className="flex items-center gap-1.5">
             <span className="h-3 w-3 flex-shrink-0 rounded-sm" style={{ backgroundColor: TYPE_COLORS[item.key] }} />
@@ -278,13 +277,6 @@ export default function TeamCalendar({ userId, api }) {
       }
     })
     return map
-  }, [events])
-
-  /** Types present this month — drives which legend entries to show */
-  const presentTypes = useMemo(() => {
-    const s = new Set()
-    events.forEach(e => s.add(e.type?.toLowerCase()))
-    return s
   }, [events])
 
   function prevMonth() {
@@ -363,7 +355,7 @@ export default function TeamCalendar({ userId, api }) {
       </div>
 
       {/* ── Legend ───────────────────────────────────────────────────── */}
-      {!loading && <Legend presentTypes={presentTypes} />}
+      {!loading && <Legend />}
 
       {/* ── Day-detail slide-over ─────────────────────────────────── */}
       {selectedDay && (

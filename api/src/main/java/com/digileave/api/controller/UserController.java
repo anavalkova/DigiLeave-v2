@@ -12,7 +12,9 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -29,6 +31,22 @@ public class UserController {
     @GetMapping
     public ResponseEntity<List<User>> getAllUsers() {
         return ResponseEntity.ok(userService.getAllUsers());
+    }
+
+    /**
+     * GET /api/users/managed?requesterId={id}
+     * ADMIN → all users; APPROVER → their direct reports; others → 403.
+     * The literal path "managed" takes precedence over the /{id} pattern.
+     */
+    @GetMapping("/managed")
+    public ResponseEntity<List<User>> getManagedUsers(@RequestParam String requesterId) {
+        try {
+            return ResponseEntity.ok(userService.getManagedUsers(requesterId));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        } catch (ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).build();
+        }
     }
 
     @GetMapping("/{id}")

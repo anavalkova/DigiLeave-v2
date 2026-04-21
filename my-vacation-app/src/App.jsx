@@ -3,9 +3,11 @@ import { GoogleLogin, googleLogout } from '@react-oauth/google'
 import axios from 'axios'
 import AdminPanel from './AdminPanel'
 import ApproverView from './ApproverView'
+import ApproverUsersView from './ApproverUsersView'
 import LeaveCalendar, { isoOf, HOLIDAYS } from './LeaveCalendar'
 import StatusBadge from './StatusBadge'
 import TeamCalendar from './TeamCalendar'
+import Pagination, { PAGE_SIZE, SortableTh, sortRequests } from './Pagination'
 import './App.css'
 
 // ─── API base URL ─────────────────────────────────────────────────────────────
@@ -199,10 +201,16 @@ function App() {
 
   // Active tab: 'team' | 'request' | 'history' | 'approvals' | 'users'
   const [activeTab, setActiveTab] = useState('team')
+  const [historyPage, setHistoryPage] = useState(1)
+  const [historySort, setHistorySort] = useState({ key: 'startDate', dir: 'desc' })
 
   // Admin state
   const [allUsers, setAllUsers]         = useState([])
   const [usersLoading, setUsersLoading] = useState(false)
+
+  // Approver — read-only team members list
+  const [managedUsers, setManagedUsers]           = useState([])
+  const [managedUsersLoading, setManagedUsersLoading] = useState(false)
 
   // Approver/admin state
   const [pendingRequests, setPendingRequests] = useState([])
@@ -263,6 +271,7 @@ function App() {
     try {
       const { data } = await axios.get(`${API}/api/leave/user/${userId}`)
       setHistory(data.map((item) => ({ ...item, status: item.status.toLowerCase() })))
+      setHistoryPage(1)
     } catch (err) {
       if (err.response) {
         setHistoryError('Could not load your leave history. Please refresh to try again.')
@@ -327,6 +336,18 @@ function App() {
     }
   }
 
+  async function fetchManagedUsers(userId) {
+    setManagedUsersLoading(true)
+    try {
+      const { data } = await axios.get(`${API}/api/users/managed?requesterId=${userId}`)
+      setManagedUsers(data)
+    } catch {
+      // non-critical
+    } finally {
+      setManagedUsersLoading(false)
+    }
+  }
+
   async function handleRoleUpdate(userId, role) {
     // Let the error propagate — AdminPanel.saveRow only clears edits on success
     const { data } = await axios.patch(`${API}/api/users/${userId}/role`, { role })
@@ -346,6 +367,12 @@ function App() {
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchAllUsers()
   }, [user?.id])
+
+  useEffect(() => {
+    if (user?.id && user?.role === 'APPROVER' && activeTab === 'users') {
+      fetchManagedUsers(user.id)
+    }
+  }, [user?.id, user?.role, activeTab])
 
   async function fetchPendingRequests(userId) {
     setPendingLoading(true)
@@ -430,6 +457,7 @@ function App() {
       setHistory((prev) => [{ ...data, status: data.status.toLowerCase() }, ...prev])
       fetchSummary(user.id)
       handleClear()
+      setHistoryPage(1)
       setActiveTab('history')
     } catch (err) {
       const msg = err.response?.status === 422
@@ -452,6 +480,22 @@ function App() {
   const totalDaysAccounted = history
     .filter((row) => row.status !== 'rejected' && row.status !== 'cancelled')
     .reduce((sum, row) => sum + row.totalDays, 0)
+
+  // My Requests — sorted by chosen column, then paginated
+  const sortedHistory = useMemo(
+    () => sortRequests(history, historySort.key, historySort.dir),
+    [history, historySort]
+  )
+  const pagedHistory = sortedHistory.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE)
+
+  function handleHistorySort(key) {
+    setHistorySort(prev =>
+      prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: 'desc' }
+    )
+    setHistoryPage(1)
+  }
 
   // Map of ISO date → 'approved' | 'pending' for marking existing leave on the calendar
   const leaveDateMap = useMemo(() => {
@@ -494,7 +538,7 @@ function App() {
     { id: 'request',  label: 'Request Leave' },
     { id: 'history',  label: 'My Requests' },
     ...(canApprove ? [{ id: 'approvals', label: pendingCount > 0 ? `Approvals (${pendingCount})` : 'Approvals' }] : []),
-    ...(user.role === 'ADMIN' ? [{ id: 'users', label: 'Users' }] : []),
+    ...(canApprove ? [{ id: 'users', label: 'Users' }] : []),
   ]
 
   return (
@@ -730,17 +774,17 @@ function App() {
                     </caption>
                     <thead>
                       <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
-                        <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">Requested</th>
-                        <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">Start</th>
-                        <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">End</th>
-                        <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">Days</th>
-                        <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">Type</th>
-                        <th scope="col" className="py-3 pr-4 font-medium whitespace-nowrap">Status</th>
+                        <SortableTh label="Requested" colKey="requestDate" sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
+                        <SortableTh label="Start"     colKey="startDate"   sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
+                        <SortableTh label="End"       colKey="endDate"     sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
+                        <SortableTh label="Days"      colKey="totalDays"   sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
+                        <SortableTh label="Type"      colKey="type"        sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
+                        <SortableTh label="Status"    colKey="status"      sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
                         <th scope="col" className="py-3 font-medium"><span className="sr-only">Actions</span></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {history.map((row) => (
+                      {pagedHistory.map((row) => (
                         <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                           <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.requestDate}>{fmtDate(row.requestDate)}</time></td>
                           <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.startDate}>{fmtDate(row.startDate)}</time></td>
@@ -772,6 +816,12 @@ function App() {
                       </tr>
                     </tfoot>
                   </table>
+                  <Pagination
+                    page={historyPage}
+                    total={sortedHistory.length}
+                    pageSize={PAGE_SIZE}
+                    onChange={setHistoryPage}
+                  />
                 </div>
               )}
             </div>
@@ -806,21 +856,28 @@ function App() {
             </div>
           )}
 
-          {/* ── Users tab (ADMIN only) ──────────────────────────────────── */}
-          {activeTab === 'users' && user.role === 'ADMIN' && (
+          {/* ── Users tab (ADMIN = full edit; APPROVER = read-only) ────── */}
+          {activeTab === 'users' && canApprove && (
             <div
               id="tabpanel-users"
               role="tabpanel"
               aria-labelledby="tab-users"
               className="p-6"
             >
-              <AdminPanel
-                allUsers={allUsers}
-                usersLoading={usersLoading}
-                onSaveRole={handleRoleUpdate}
-                onSaveEntitlement={handleEntitlementUpdate}
-                onSaveApprovers={handleApproverSave}
-              />
+              {user.role === 'ADMIN' ? (
+                <AdminPanel
+                  allUsers={allUsers}
+                  usersLoading={usersLoading}
+                  onSaveRole={handleRoleUpdate}
+                  onSaveEntitlement={handleEntitlementUpdate}
+                  onSaveApprovers={handleApproverSave}
+                />
+              ) : (
+                <ApproverUsersView
+                  users={managedUsers}
+                  loading={managedUsersLoading}
+                />
+              )}
             </div>
           )}
 
