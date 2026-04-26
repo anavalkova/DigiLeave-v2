@@ -143,9 +143,11 @@ export default function AdminPanel({
   usersLoading,
   onSaveRole,
   onSaveApprovers,
-  onSaveEntitlement,
+  onSaveBalance,
+  onSaveTeam,
+  onRefreshUsers,
 }) {
-  // rowEdits: { [userId]: { role?, approverEmails?, entitledDays? } }
+  // rowEdits: { [userId]: { role?, approverEmails?, entitled?, startingBalanceAdjustment?, team? } }
   const [rowEdits, setRowEdits]     = useState({})
   const [saving, setSaving]         = useState({})
   const [saveError, setSaveError]   = useState({})
@@ -167,8 +169,10 @@ export default function AdminPanel({
     const { key, dir } = userSort
     return [...allUsers].sort((a, b) => {
       let cmp
-      if (key === 'entitledDays') {
-        cmp = Number(a[key] ?? 0) - Number(b[key] ?? 0)
+      if (key === 'entitled') {
+        cmp = Number(a.annualLeave?.entitled ?? a.entitledDays ?? 0) - Number(b.annualLeave?.entitled ?? b.entitledDays ?? 0)
+      } else if (key === 'team') {
+        cmp = String(a.team ?? '').localeCompare(String(b.team ?? ''))
       } else {
         cmp = String(a[key] ?? '').localeCompare(String(b[key] ?? ''))
       }
@@ -232,10 +236,18 @@ export default function AdminPanel({
     setSaveError((prev) => { const next = { ...prev }; delete next[u.id]; return next })
 
     try {
+      const hasBalanceEdit = 'entitled' in edits || 'startingBalanceAdjustment' in edits
       await Promise.all([
         'role'           in edits ? onSaveRole(u.id, edits.role)                : null,
         'approverEmails' in edits ? onSaveApprovers(u.id, edits.approverEmails) : null,
-        'entitledDays'   in edits ? onSaveEntitlement(u.id, edits.entitledDays) : null,
+        'team'           in edits ? onSaveTeam(u.id, edits.team)               : null,
+        hasBalanceEdit
+          ? onSaveBalance(
+              u.id,
+              Math.round(edits.entitled               ?? (u.annualLeave?.entitled               ?? u.entitledDays ?? 0)),
+              Math.round(edits.startingBalanceAdjustment ?? (u.annualLeave?.startingBalanceAdjustment ?? 0))
+            )
+          : null,
       ].filter(Boolean))
 
       // Only clear local edits after every save succeeded
@@ -245,8 +257,13 @@ export default function AdminPanel({
         return next
       })
       setToast({ message: `${u.name} saved.`, type: 'success' })
-    } catch {
-      setSaveError((prev) => ({ ...prev, [u.id]: 'Save failed — please try again.' }))
+      onRefreshUsers?.()
+    } catch (err) {
+      const detail = err.response?.data?.message ?? err.response?.data ?? err.message ?? null
+      const msg = typeof detail === 'string' && detail.length < 200
+        ? `Save failed: ${detail}`
+        : 'Save failed — please try again.'
+      setSaveError((prev) => ({ ...prev, [u.id]: msg }))
     } finally {
       setSaving((prev) => ({ ...prev, [u.id]: false }))
     }
@@ -273,7 +290,8 @@ export default function AdminPanel({
                 <SortableTh label="Email"         colKey="email"        sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
                 <SortableTh label="Role"          colKey="role"         sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
                 <th scope="col" className="py-3 pr-4 font-medium">Managers</th>
-                <SortableTh label="Entitled Days" colKey="entitledDays" sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
+                <SortableTh label="Balance" colKey="entitled" sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
+                <SortableTh label="Team"    colKey="team"     sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
                 <th scope="col" className="py-3 font-medium"><span className="sr-only">Save</span></th>
               </tr>
             </thead>
@@ -284,7 +302,10 @@ export default function AdminPanel({
                 const error            = saveError[u.id]
                 const currentRole      = get(u.id, 'role', u.role ?? 'USER')
                 const currentApprovers = get(u.id, 'approverEmails', u.approverEmails ?? [])
-                const currentDays      = get(u.id, 'entitledDays', u.entitledDays)
+                const currentEntitled  = get(u.id, 'entitled', u.annualLeave?.entitled ?? u.entitledDays ?? 0)
+                const currentAdj       = get(u.id, 'startingBalanceAdjustment', u.annualLeave?.startingBalanceAdjustment ?? 0)
+                const transferred      = u.annualLeave?.transferred ?? 0
+                const currentTeam      = get(u.id, 'team', u.team ?? '')
                 const showWarn         = approverWarn === u.id
 
                 // key must be on Fragment — not on an inner <tr> — so React can
@@ -323,15 +344,49 @@ export default function AdminPanel({
                         />
                       </td>
 
-                      {/* Entitled days */}
+                      {/* Balance: entitled + adjustment inputs, carried-over display */}
                       <td className="py-3 pr-4">
-                        <input
-                          type="number"
-                          min="0"
-                          value={currentDays}
-                          onChange={(e) => set(u.id, 'entitledDays', Number(e.target.value))}
-                          className="w-20 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
+                        <div className="flex flex-col gap-1.5 min-w-[180px]">
+                          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                            <span className="w-20 shrink-0">Entitled</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={currentEntitled}
+                              onChange={(e) => set(u.id, 'entitled', Number(e.target.value))}
+                              className="w-16 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                            <span className="w-20 shrink-0">Adjustment</span>
+                            <input
+                              type="number"
+                              step="1"
+                              value={currentAdj}
+                              onChange={(e) => set(u.id, 'startingBalanceAdjustment', Number(e.target.value))}
+                              className="w-16 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </label>
+                          {transferred !== 0 && (
+                            <span className="text-xs text-cyan-600">
+                              +{transferred} carried over
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Team */}
+                      <td className="py-3 pr-4">
+                        <select
+                          value={currentTeam}
+                          onChange={(e) => set(u.id, 'team', e.target.value || null)}
+                          className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                        >
+                          <option value="">—</option>
+                          <option value="OPR">OPR</option>
+                          <option value="DEV">DEV</option>
+                        </select>
                       </td>
 
                       {/* Save — disabled unless this specific row has unsaved changes */}
@@ -350,7 +405,7 @@ export default function AdminPanel({
                     {/* Approver-demotion warning row */}
                     {showWarn && (
                       <tr className="bg-amber-50">
-                        <td colSpan={6} className="py-2 px-3 text-xs text-amber-800">
+                        <td colSpan={7} className="py-2 px-3 text-xs text-amber-800">
                           <span className="font-medium">Warning:</span>{' '}
                           {u.name} is currently a manager for other users. Removing their
                           Approver role will not automatically reassign those users.{' '}
@@ -376,7 +431,7 @@ export default function AdminPanel({
                     {/* Inline error row — only rendered on save failure */}
                     {error && (
                       <tr className="bg-red-50">
-                        <td colSpan={6} className="py-1.5 px-3 text-xs text-red-600">{error}</td>
+                        <td colSpan={7} className="py-1.5 px-3 text-xs text-red-600">{error}</td>
                       </tr>
                     )}
                   </Fragment>

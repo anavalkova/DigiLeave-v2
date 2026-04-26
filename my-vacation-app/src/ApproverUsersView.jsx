@@ -18,12 +18,26 @@ export default function ApproverUsersView({ users, loading }) {
     setPage(1)
   }
 
+  function getBalanceField(u, field) {
+    if (field === 'entitled')   return u.annualLeave?.entitled   ?? u.entitledDays ?? 0
+    if (field === 'used')       return u.annualLeave?.used       ?? u.usedDays     ?? 0
+    if (field === 'available')  {
+      const bal = u.annualLeave
+      return bal
+        ? bal.entitled + bal.transferred + bal.startingBalanceAdjustment - bal.used
+        : (u.remainingDays ?? 0)
+    }
+    return null
+  }
+
   const sorted = useMemo(() => {
     const { key, dir } = sort
     return [...users].sort((a, b) => {
       let cmp
-      if (key === 'entitledDays' || key === 'usedDays' || key === 'remainingDays') {
-        cmp = Number(a[key] ?? 0) - Number(b[key] ?? 0)
+      if (key === 'entitled' || key === 'used' || key === 'available') {
+        cmp = getBalanceField(a, key) - getBalanceField(b, key)
+      } else if (key === 'team') {
+        cmp = String(a.team ?? '').localeCompare(String(b.team ?? ''))
       } else {
         cmp = String(a[key] ?? '').localeCompare(String(b[key] ?? ''))
       }
@@ -64,9 +78,10 @@ export default function ApproverUsersView({ users, loading }) {
             <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
               {th('Name',       'name')}
               {th('Email',      'email')}
-              {th('Entitled',   'entitledDays')}
-              {th('Used',       'usedDays')}
-              {th('Remaining',  'remainingDays')}
+              {th('Team',       'team')}
+              {th('Entitled',   'entitled')}
+              {th('Used',       'used')}
+              {th('Available',  'available')}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -74,12 +89,22 @@ export default function ApproverUsersView({ users, loading }) {
               <tr key={u.id} className="hover:bg-gray-50 transition-colors">
                 <td className="py-3 pr-4 font-medium text-gray-800 whitespace-nowrap">{u.name}</td>
                 <td className="py-3 pr-4 text-xs text-gray-500">{u.email}</td>
-                <td className="py-3 pr-4 tabular-nums text-center">{u.entitledDays}</td>
-                <td className="py-3 pr-4 tabular-nums text-center text-violet-600">{u.usedDays}</td>
+                <td className="py-3 pr-4 text-center">
+                  {u.team
+                    ? <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">{u.team}</span>
+                    : <span className="text-gray-300">—</span>}
+                </td>
+                <td className="py-3 pr-4 tabular-nums text-center">{getBalanceField(u, 'entitled')}</td>
+                <td className="py-3 pr-4 tabular-nums text-center text-violet-600">{getBalanceField(u, 'used')}</td>
                 <td className="py-3 pr-4 tabular-nums text-center">
-                  <span className={u.remainingDays === 0 ? 'text-red-500 font-medium' : 'text-emerald-600 font-medium'}>
-                    {u.remainingDays}
-                  </span>
+                  {(() => {
+                    const avail = getBalanceField(u, 'available')
+                    return (
+                      <span className={avail <= 0 ? 'text-red-500 font-medium' : 'text-emerald-600 font-medium'}>
+                        {avail}
+                      </span>
+                    )
+                  })()}
                 </td>
               </tr>
             ))}

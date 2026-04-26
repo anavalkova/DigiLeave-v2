@@ -2,6 +2,21 @@ import { useState, useEffect } from 'react'
 import StatusBadge from './StatusBadge'
 import Pagination, { PAGE_SIZE, SortableTh, sortRequests } from './Pagination'
 
+// Type display helpers (mirrors App.jsx logic — normalises legacy label format)
+const LEAVE_TYPE_LABELS = {
+  annual: 'Annual Leave', sick: 'Sick Leave', unpaid: 'Unpaid Leave',
+  maternity: 'Maternity / Paternity', home_office: 'Home Office',
+}
+const LEGACY_TYPE_MAP = {
+  'annual leave': 'annual', 'sick leave': 'sick', 'unpaid leave': 'unpaid',
+  'maternity / paternity': 'maternity', 'home office': 'home_office',
+}
+function formatLeaveType(type) {
+  if (!type) return '—'
+  const key = LEGACY_TYPE_MAP[type.toLowerCase().trim()] ?? type.toLowerCase().trim()
+  return LEAVE_TYPE_LABELS[key] ?? type
+}
+
 /** Format ISO date string as "3 Feb 2026" */
 function fmtDate(iso) {
   const [y, m, d] = iso.split('-').map(Number)
@@ -16,7 +31,7 @@ function fmtDate(iso) {
  */
 export default function ApproverView({ requests, loading, onApprove, onReject }) {
   const [page, setPage]   = useState(1)
-  const [sort, setSort]   = useState({ key: 'startDate', dir: 'desc' })
+  const [sort, setSort]   = useState({ key: 'requestDate', dir: 'desc' })
 
   // Reset to first page whenever the requests list changes
   useEffect(() => { setPage(1) }, [requests])
@@ -90,7 +105,7 @@ export default function ApproverView({ requests, loading, onApprove, onReject })
                   <time dateTime={req.endDate}>{fmtDate(req.endDate)}</time>
                 </td>
                 <td className="py-3 pr-4 tabular-nums">{req.totalDays}</td>
-                <td className="py-3 pr-4">{req.type}</td>
+                <td className="py-3 pr-4">{formatLeaveType(req.type)}</td>
                 <td className="py-3 pr-4">
                   <StatusBadge status={req.status.toLowerCase()} />
                 </td>

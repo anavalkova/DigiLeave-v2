@@ -1,0 +1,48 @@
+query GetUserProfile @auth(level: USER, insecureReason: "This operation is safe to expose to all logged in users as it fetches the current user's own profile.") {
+  user(key: {id_expr: "auth.uid"}) {
+    id
+    firstName
+    lastName
+    email
+    role
+    department
+    manager {
+      id
+      firstName
+      lastName
+    }
+    createdAt
+  }
+}
+
+query ListUserLeaveBalances @auth(level: USER, insecureReason: "This operation is safe to expose to all logged in users as it fetches the current user's own leave balances.") {
+  leaveBalances(where: {userId: {eq_expr: "auth.uid"}}) {
+    id
+    totalDays
+    availableDays
+    createdAt
+    updatedAt
+  }
+}
+
+mutation RequestLeave($startDate: Date!, $endDate: Date!, $requestedDays: Int!, $status: String!) @auth(level: USER, insecureReason: "This operation allows logged-in users to create their own leave requests.") {
+  leaveRequest_insert(data: {
+    employeeId_expr: "auth.uid",
+    startDate: $startDate,
+    endDate: $endDate,
+    requestedDays: $requestedDays,
+    status: $status,
+    createdAt_expr: "request.time"
+  })
+}
+
+mutation UpdateLeaveRequestStatus($id: UUID!, $status: String!, $approverId: UUID, $approvedAt: Timestamp) @auth(expr: "auth.uid != null && (resource.employee.managerId == auth.uid || resource.role == 'Admin')", insecureReason: "This operation is protected by a CEL expression to ensure only managers or admins can update leave requests.") {
+  leaveRequest_update(
+    key: {id: $id},
+    data: {
+      status: $status,
+      approverId: $approverId,
+      approvedAt: $approvedAt
+    }
+  )
+}

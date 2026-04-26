@@ -110,29 +110,37 @@ function DayDetail({ iso, events, onClose }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {events.map(ev => (
-                <tr key={ev.id} className="hover:bg-gray-50">
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 flex-shrink-0 rounded-sm" style={{ backgroundColor: typeColor(ev.type) }} />
-                      <span className="font-medium text-gray-800">{ev.userName}</span>
-                      {ev.status === 'PENDING' && (
-                        <span className="text-[10px] font-medium text-amber-600">(pending)</span>
+              {events.map(ev => {
+                const slot = ev.halfDaySlot && ev.halfDaySlot !== 'NONE' ? ev.halfDaySlot : null
+                return (
+                  <tr key={ev.id} className="hover:bg-gray-50">
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 flex-shrink-0 rounded-sm" style={{ backgroundColor: typeColor(ev.type) }} />
+                        <span className="font-medium text-gray-800">{ev.userName}</span>
+                        {ev.status === 'PENDING' && (
+                          <span className="text-[10px] font-medium text-amber-600">(pending)</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span
+                        className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white"
+                        style={{ backgroundColor: typeColor(ev.type), opacity: ev.status === 'PENDING' ? 0.7 : 1 }}
+                      >
+                        {typeLabel(ev.type)}
+                      </span>
+                      {slot && (
+                        <span className="ml-1.5 text-[10px] font-medium text-gray-500">
+                          {slot === 'MORNING' ? '☀ AM' : '🌙 PM'}
+                        </span>
                       )}
-                    </div>
-                  </td>
-                  <td className="px-5 py-3">
-                    <span
-                      className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white"
-                      style={{ backgroundColor: typeColor(ev.type), opacity: ev.status === 'PENDING' ? 0.7 : 1 }}
-                    >
-                      {typeLabel(ev.type)}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 whitespace-nowrap text-xs text-gray-600">{fmtShort(ev.start)}</td>
-                  <td className="px-5 py-3 whitespace-nowrap text-xs text-gray-600">{fmtShort(ev.end)}</td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-5 py-3 whitespace-nowrap text-xs text-gray-600">{fmtShort(ev.start)}</td>
+                    <td className="px-5 py-3 whitespace-nowrap text-xs text-gray-600">{fmtShort(ev.end)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -145,9 +153,54 @@ function DayDetail({ iso, events, onClose }) {
 
 const MAX_CHIPS = 3
 
+/**
+ * Determines which slot an event occupies on a given calendar day.
+ * MORNING / AFTERNOON applies only to the last day of the event range.
+ * All earlier days in a multi-day event are treated as full-day.
+ */
+function getSlotForDay(ev, iso) {
+  if (!ev.halfDaySlot || ev.halfDaySlot === 'NONE') return 'FULL'
+  if (iso === ev.end) return ev.halfDaySlot  // 'MORNING' or 'AFTERNOON'
+  return 'FULL'
+}
+
+/** Chip element for one event, with optional half-width layout. */
+function Chip({ ev, slot }) {
+  const roundClass =
+    slot === 'MORNING'   ? 'rounded-l' :
+    slot === 'AFTERNOON' ? 'rounded-r' :
+                           'rounded'
+
+  const label =
+    slot === 'MORNING'   ? '▷ ' + ev.userName.split(' ')[0] :
+    slot === 'AFTERNOON' ? ev.userName.split(' ')[0] + ' ◁' :
+                           ev.userName.split(' ')[0]
+
+  return (
+    <span
+      title={`${ev.userName} · ${typeLabel(ev.type)}${slot !== 'FULL' ? ' (' + slot.toLowerCase() + ')' : ''}`}
+      style={{
+        backgroundColor: typeColor(ev.type),
+        opacity: ev.status === 'PENDING' ? 0.55 : 1,
+      }}
+      className={`block truncate ${roundClass} px-1 text-[10px] font-medium text-white leading-[14px] select-none`}
+    >
+      {label}
+    </span>
+  )
+}
+
 function DayCell({ iso, dayNum, isToday, isWeekend, holiday, events, onClick }) {
-  const visible  = events.slice(0, MAX_CHIPS)
-  const overflow = events.length - MAX_CHIPS
+  // Categorise events by their effective slot on this specific day
+  const fullDay   = events.filter(ev => getSlotForDay(ev, iso) === 'FULL')
+  const morningEvs  = events.filter(ev => getSlotForDay(ev, iso) === 'MORNING')
+  const afternoonEvs = events.filter(ev => getSlotForDay(ev, iso) === 'AFTERNOON')
+
+  const hasHalf   = morningEvs.length > 0 || afternoonEvs.length > 0
+  // Full-day chips shown before the half-day row; reserve 1 slot for the half-day row
+  const fullVisible = fullDay.slice(0, hasHalf ? MAX_CHIPS - 1 : MAX_CHIPS)
+  const overflow  = events.length - fullVisible.length - morningEvs.length - afternoonEvs.length
+
   const clickable = events.length > 0 || !!holiday
 
   return (
@@ -176,21 +229,29 @@ function DayCell({ iso, dayNum, isToday, isWeekend, holiday, events, onClick }) 
         {holiday && <span className="ml-0.5 text-amber-400" title={holiday}>●</span>}
       </p>
 
-      {/* Event chips — colour by type */}
       <div className="flex flex-col gap-0.5">
-        {visible.map(ev => (
-          <span
-            key={ev.id}
-            title={`${ev.userName} · ${typeLabel(ev.type)}`}
-            style={{
-              backgroundColor: typeColor(ev.type),
-              opacity: ev.status === 'PENDING' ? 0.55 : 1,
-            }}
-            className="block truncate rounded px-1 text-[10px] font-medium text-white leading-[14px] select-none"
-          >
-            {ev.userName.split(' ')[0]}
-          </span>
+        {/* Full-day chips */}
+        {fullVisible.map(ev => (
+          <Chip key={ev.id} ev={ev} slot="FULL" />
         ))}
+
+        {/* Half-day chips — MORNING (left 50%) and AFTERNOON (right 50%) side-by-side */}
+        {hasHalf && (
+          <div className="flex gap-px">
+            {/* Left half — MORNING */}
+            <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+              {morningEvs.map(ev => (
+                <Chip key={ev.id} ev={ev} slot="MORNING" />
+              ))}
+            </div>
+            {/* Right half — AFTERNOON */}
+            <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+              {afternoonEvs.map(ev => (
+                <Chip key={ev.id} ev={ev} slot="AFTERNOON" />
+              ))}
+            </div>
+          </div>
+        )}
 
         {overflow > 0 && (
           <span className="text-[10px] font-medium text-blue-600 leading-[14px] select-none">
@@ -243,6 +304,7 @@ export default function TeamCalendar({ userId, api }) {
 
   const [viewYear,     setViewYear]     = useState(today.getFullYear())
   const [viewMonth,    setViewMonth]    = useState(today.getMonth())
+  const [teamFilter,   setTeamFilter]   = useState('')   // '' | 'OPR' | 'DEV'
   const [events,       setEvents]       = useState([])
   const [loading,      setLoading]      = useState(false)
   const [error,        setError]        = useState('')
@@ -252,14 +314,14 @@ export default function TeamCalendar({ userId, api }) {
     if (!userId) return
     setLoading(true)
     setError('')
+    const params = { viewerId: userId, year: viewYear, month: viewMonth + 1 }
+    if (teamFilter) params.team = teamFilter
     axios
-      .get(`${api}/api/leave/calendar`, {
-        params: { viewerId: userId, year: viewYear, month: viewMonth + 1 },
-      })
+      .get(`${api}/api/leave/calendar`, { params })
       .then(({ data }) => setEvents(data))
       .catch(() => setError('Could not load team calendar. Please try again.'))
       .finally(() => setLoading(false))
-  }, [userId, viewYear, viewMonth, api])
+  }, [userId, viewYear, viewMonth, teamFilter, api])
 
   /** Expand each event across every day it covers → iso → [events] */
   const eventsByDay = useMemo(() => {
@@ -296,8 +358,8 @@ export default function TeamCalendar({ userId, api }) {
   return (
     <div className="space-y-4">
 
-      {/* ── Month navigation ──────────────────────────────────────────── */}
-      <div className="flex items-center gap-2">
+      {/* ── Month navigation + team filter ──────────────────────────── */}
+      <div className="flex items-center gap-2 flex-wrap">
         <button type="button" onClick={prevMonth} aria-label="Previous month"
           className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 text-lg leading-none">
           ‹
@@ -310,6 +372,23 @@ export default function TeamCalendar({ userId, api }) {
           ›
         </button>
         {loading && <span className="ml-1 text-xs text-gray-400">Loading…</span>}
+
+        {/* Team filter */}
+        <div className="ml-auto flex items-center gap-1.5">
+          <label htmlFor="team-filter" className="text-xs text-gray-500 whitespace-nowrap">
+            Team
+          </label>
+          <select
+            id="team-filter"
+            value={teamFilter}
+            onChange={(e) => { setTeamFilter(e.target.value); setSelectedDay(null) }}
+            className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">All teams</option>
+            <option value="OPR">OPR</option>
+            <option value="DEV">DEV</option>
+          </select>
+        </div>
       </div>
 
       {error && (

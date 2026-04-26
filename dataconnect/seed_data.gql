@@ -1,0 +1,87 @@
+mutation CreateDemoData @transaction @auth(level: USER, insecureReason: "This is seed data creation, authentication is for demo purposes.") {
+  user_insertMany(data: [
+    {
+      id: "6e2e8e3d-1a0e-4b7e-8c0c-7b0a3c7c7c7c",
+      firstName: "Alice",
+      lastName: "Smith",
+      email: "alice.smith@example.com",
+      role: "Employee",
+      createdAt: "2023-01-01T00:00:00Z",
+      department: "Engineering"
+    },
+    {
+      id: "7d3f9f4e-2b1f-5c8f-9d1d-8c1b4d8d8d8d",
+      firstName: "Bob",
+      lastName: "Johnson",
+      email: "bob.johnson@example.com",
+      role: "Manager",
+      createdAt: "2023-01-02T00:00:00Z",
+      department: "Human Resources"
+    },
+    {
+      id: "8e4g0g5f-3c2g-6d9g-0e2e-9d2c5e9e9e9e",
+      firstName: "Charlie",
+      lastName: "Brown",
+      email: "charlie.brown@example.com",
+      role: "Employee",
+      createdAt: "2023-01-03T00:00:00Z",
+      department: "Marketing"
+    }
+  ])
+  leavePolicy_insertMany(data: [
+    {
+      id: "1a1b1c1d-1e1f-1g1h-1i1j-1k1l1m1n1o1p",
+      name: "Annual Leave",
+      annualEntitlementDays: 20,
+      carryOverDays: 5,
+      createdAt: "2023-01-01T00:00:00Z",
+      description: "Standard annual leave policy",
+      accrualFrequency: "Monthly"
+    },
+    {
+      id: "2q2r2s2t-2u2v-2w2x-2y2z-2a2b2c2d2e2f",
+      name: "Sick Leave",
+      annualEntitlementDays: 10,
+      carryOverDays: 0,
+      createdAt: "2023-01-01T00:00:00Z",
+      description: "Policy for sick days",
+      accrualFrequency: "Yearly"
+    }
+  ])
+  leaveBalance_insertMany(data: [
+    {
+      userId: "6e2e8e3d-1a0e-4b7e-8c0c-7b0a3c7c7c7c",
+      totalDays: 20,
+      availableDays: 15,
+      createdAt: "2023-01-05T00:00:00Z",
+      updatedAt: "2023-01-05T00:00:00Z"
+    },
+    {
+      userId: "7d3f9f4e-2b1f-5c8f-9d1d-8c1b4d8d8d8d",
+      totalDays: 20,
+      availableDays: 20,
+      createdAt: "2023-01-05T00:00:00Z",
+      updatedAt: "2023-01-05T00:00:00Z"
+    }
+  ])
+  leaveRequest_insertMany(data: [
+    {
+      employeeId: "6e2e8e3d-1a0e-4b7e-8c0c-7b0a3c7c7c7c",
+      startDate: "2023-06-01",
+      endDate: "2023-06-05",
+      status: "Pending",
+      requestedDays: 5,
+      createdAt: "2023-05-15T00:00:00Z"
+    },
+    {
+      employeeId: "6e2e8e3d-1a0e-4b7e-8c0c-7b0a3c7c7c7c",
+      startDate: "2023-07-10",
+      endDate: "2023-07-10",
+      status: "Approved",
+      requestedDays: 1,
+      createdAt: "2023-07-01T00:00:00Z",
+      approverId: "7d3f9f4e-2b1f-5c8f-9d1d-8c1b4d8d8d8d",
+      approvedAt: "2023-07-02T00:00:00Z"
+    }
+  ])
+}

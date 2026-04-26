@@ -25,6 +25,31 @@ const LEAVE_TYPE_LABELS = {
   home_office: 'Home Office',
 }
 
+// Legacy label → canonical key map (for records stored before the key-based format)
+const LEGACY_TYPE_MAP = {
+  'annual leave':          'annual',
+  'sick leave':            'sick',
+  'unpaid leave':          'unpaid',
+  'maternity / paternity': 'maternity',
+  'home office':           'home_office',
+}
+
+/**
+ * Normalise a leave type string to its canonical key (e.g. "Annual Leave" → "annual").
+ * Handles both the current key format and legacy label format transparently.
+ */
+function normalizeType(type) {
+  if (!type) return ''
+  const lower = type.toLowerCase().trim()
+  return LEGACY_TYPE_MAP[lower] ?? lower
+}
+
+/** Return a human-readable label for any type string, regardless of storage format. */
+function formatLeaveType(type) {
+  const key = normalizeType(type)
+  return LEAVE_TYPE_LABELS[key] ?? type ?? '—'
+}
+
 // Holiday set kept in LeaveCalendar.jsx (single source of truth for frontend).
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -52,9 +77,10 @@ function initials(name = '') {
 /**
  * Count working days between two ISO date strings (inclusive),
  * excluding weekends and Bulgarian public holidays.
+ * When halfDayOnEnd is true the last date contributes 0.5 instead of 1.
  * Returns null if either date is missing or end < start.
  */
-function countWorkdays(start, end) {
+function countWorkdays(start, end, halfDayOnEnd = false) {
   if (!start || !end || end < start) return null
   let count = 0
   const cur  = new Date(start + 'T00:00:00')
@@ -62,7 +88,10 @@ function countWorkdays(start, end) {
   while (cur <= last) {
     const dow = cur.getDay() // 0=Sun, 6=Sat
     const iso = isoOf(cur)
-    if (dow !== 0 && dow !== 6 && !HOLIDAYS[iso]) count++
+    if (dow !== 0 && dow !== 6 && !HOLIDAYS[iso]) {
+      const isLastDay = iso === end
+      count += (halfDayOnEnd && isLastDay) ? 0.5 : 1
+    }
     cur.setDate(cur.getDate() + 1)
   }
   return count
@@ -71,25 +100,187 @@ function countWorkdays(start, end) {
 // ─── Sub-components ──────────────────────────────────────────────────────────
 // StatusBadge is imported from StatusBadge.jsx (shared with ApproverView)
 
-function BalanceCard({ label, value, accent }) {
-  const accents = {
-    blue:    'border-t-blue-500 text-blue-600',
-    violet:  'border-t-violet-500 text-violet-600',
-    amber:   'border-t-amber-500 text-amber-600',
-    emerald: 'border-t-emerald-500 text-emerald-600',
-    red:     'border-t-red-500 text-red-600',
-  }
+/** Format a number: whole numbers show without decimals, halves show one decimal place. */
+function fmtDays(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+}
+
+/**
+ * Compact balance summary strip replacing the old 5-card grid.
+ *
+ * Available = (Entitled + CarriedOver + Adj) − (Used + Pending)
+ *
+ * The backend's summary.available only subtracts Used, not Pending.
+ * We recompute displayAvailable here so we never double-count.
+ *
+ * Progress bar: the grey track is split into two zones —
+ *   • light grey  = entitled days (this year's allocation)
+ *   • cyan-100    = transferred / carried-over days (answers the "different shade" question)
+ * The foreground segments (emerald = used, amber = pending) overlay the track;
+ * whatever is uncovered shows which pool of days is still available.
+ */
+function BalanceSummary({ summary }) {
+  const entitled    = summary?.entitled                    ?? 0
+  const transferred = summary?.transferred                 ?? 0
+  const adj         = summary?.startingBalanceAdjustment   ?? 0
+  const used        = summary?.used                        ?? 0
+  const pending     = summary?.pending                     ?? 0
+
+  const totalBudget       = entitled + transferred + adj
+  const committed         = used + pending
+  const displayAvail      = totalBudget - committed   // correct: subtracts both used + pending
+  const overBudget        = committed > totalBudget
+  const halfDayRemaining  = !overBudget && displayAvail > 0 && displayAvail % 1 === 0.5
+
+  // Bar segment widths as percentages of totalBudget
+  const usedPct        = totalBudget > 0 ? Math.min(100, used    / totalBudget * 100) : 0
+  const pendingPct     = totalBudget > 0 ? Math.min(100 - usedPct, pending / totalBudget * 100) : 0
+  // Boundary between entitled and transferred zones (for track colouring)
+  const entitledZonePct = totalBudget > 0 ? (entitled + adj) / totalBudget * 100 : 100
+
   return (
-    <article
-      aria-label={label}
-      className={`bg-white rounded-xl shadow-sm border border-gray-200 border-t-4 ${accents[accent]} p-5 flex flex-col gap-1`}
+    <div
+      role="region"
+      aria-label="Leave balance summary"
+      className="rounded-xl border border-gray-200 bg-white overflow-hidden"
     >
-      <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</h3>
-      <data value={value} className={`text-3xl font-bold ${accents[accent].split(' ')[1]}`}>
-        {value}
-      </data>
-      <p className="text-xs text-gray-400">days</p>
-    </article>
+      {/* ── Metric strip ─────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
+
+        {/* ── Quota ── */}
+        <div className="px-5 py-4">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Quota</p>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="text-2xl font-bold text-gray-800">{fmtDays(totalBudget)}</span>
+            <span className="text-xs text-gray-400">days</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-snug">
+            <span className="font-semibold text-blue-600">{fmtDays(entitled)}</span>
+            <span className="text-gray-400">entitled</span>
+            {transferred > 0 && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="font-semibold text-cyan-600">+{fmtDays(transferred)}</span>
+                <span className="text-gray-400">carried over</span>
+              </>
+            )}
+            {adj !== 0 && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className={`font-semibold ${adj > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {adj > 0 ? '+' : ''}{fmtDays(adj)}
+                </span>
+                <span className="text-gray-400">adj.</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ── Booked ── */}
+        <div className="px-5 py-4">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Booked</p>
+          <div className="mt-1 flex items-baseline gap-3">
+            <span>
+              <span className="text-2xl font-bold text-violet-600">{fmtDays(used)}</span>
+              <span className="ml-0.5 text-xs text-gray-400">used</span>
+            </span>
+            {pending > 0 && (
+              <span>
+                <span className="text-2xl font-bold text-amber-500">{fmtDays(pending)}</span>
+                <span className="ml-0.5 text-xs text-gray-400">pending</span>
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-gray-400">
+            {fmtDays(committed)} days booked total
+          </p>
+        </div>
+
+        {/* ── Remaining — spans full width on mobile ── */}
+        <div className="col-span-2 sm:col-span-1 px-5 py-4 bg-gray-50 sm:bg-white">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Remaining</p>
+          <div className="mt-1 flex items-baseline gap-1.5 flex-wrap">
+            <span className={`text-2xl font-bold ${
+              overBudget           ? 'text-red-500'   :
+              displayAvail <= 2    ? 'text-amber-500' :
+                                     'text-emerald-600'
+            }`}>
+              {overBudget ? `−${fmtDays(committed - totalBudget)}` : fmtDays(displayAvail)}
+            </span>
+            <span className="text-xs text-gray-400">days</span>
+            {overBudget && (
+              <span className="text-[10px] font-semibold text-red-400 uppercase tracking-wide">over budget</span>
+            )}
+          </div>
+          {adj !== 0 && (
+            <p className="mt-1 text-xs text-gray-400">
+              incl. {adj > 0 ? '+' : ''}{fmtDays(adj)} day adj.
+            </p>
+          )}
+          {halfDayRemaining && (
+            <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600 ring-1 ring-inset ring-blue-500/20">
+              ½ 1 half-day available
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ── Progress bar ─────────────────────────────────────────── */}
+      {totalBudget > 0 && (
+        <div className="px-5 pb-4 pt-3 border-t border-gray-100">
+          {/* Track — two-zone background shows entitled (grey) vs carried-over (cyan) */}
+          <div
+            role="img"
+            aria-label={`${fmtDays(used)} days used, ${fmtDays(pending)} pending, ${fmtDays(Math.max(0, displayAvail))} remaining`}
+            className="relative h-1.5 w-full overflow-hidden rounded-full bg-gray-100"
+          >
+            {/* Carried-over zone (visible only in the uncovered / available area) */}
+            {transferred > 0 && (
+              <div
+                className="absolute inset-y-0 bg-cyan-100"
+                style={{ left: `${entitledZonePct}%`, width: `${transferred / totalBudget * 100}%` }}
+              />
+            )}
+            {/* Used — emerald, from left */}
+            <div
+              className="absolute inset-y-0 left-0 bg-emerald-500 transition-[width] duration-500 ease-out"
+              style={{ width: `${usedPct}%` }}
+            />
+            {/* Pending — amber, immediately right of used */}
+            {pendingPct > 0 && (
+              <div
+                className="absolute inset-y-0 bg-amber-400 transition-all duration-500 ease-out"
+                style={{ left: `${usedPct}%`, width: `${pendingPct}%` }}
+              />
+            )}
+          </div>
+
+          {/* Legend */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-gray-400">
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-3 shrink-0 rounded-full bg-emerald-500" />
+              Used ({fmtDays(used)})
+            </span>
+            {pending > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-3 shrink-0 rounded-full bg-amber-400" />
+                Pending ({fmtDays(pending)})
+              </span>
+            )}
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-3 shrink-0 rounded-full bg-gray-200" />
+              Remaining ({fmtDays(Math.max(0, displayAvail))})
+            </span>
+            {transferred > 0 && (
+              <span className="flex items-center gap-1.5 ml-auto">
+                <span className="h-1.5 w-3 shrink-0 rounded-full bg-cyan-200" />
+                {fmtDays(transferred)} carried over
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -202,7 +393,7 @@ function App() {
   // Active tab: 'team' | 'request' | 'history' | 'approvals' | 'users'
   const [activeTab, setActiveTab] = useState('team')
   const [historyPage, setHistoryPage] = useState(1)
-  const [historySort, setHistorySort] = useState({ key: 'startDate', dir: 'desc' })
+  const [historySort, setHistorySort] = useState({ key: 'requestDate', dir: 'desc' })
 
   // Admin state
   const [allUsers, setAllUsers]         = useState([])
@@ -219,6 +410,8 @@ function App() {
   // Form fields
   const [dateRange, setDateRange]     = useState({ from: null, to: null })
   const [leaveType, setLeaveType]     = useState('')
+  // '' = no half-day, 'MORNING' or 'AFTERNOON' = specific slot
+  const [halfDaySlot, setHalfDaySlot] = useState('')
   const [reason, setReason]           = useState('')
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting]   = useState(false)
@@ -354,13 +547,18 @@ function App() {
     setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
   }
 
-  async function handleEntitlementUpdate(userId, entitledDays) {
-    const { data } = await axios.patch(`${API}/api/users/${userId}/entitlement`, { entitledDays })
+  async function handleBalanceUpdate(userId, entitled, startingBalanceAdjustment) {
+    const { data } = await axios.patch(`${API}/api/users/${userId}/balance`, { entitled, startingBalanceAdjustment })
     setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
   }
 
   async function handleApproverSave(userId, approverEmails) {
     const { data } = await axios.patch(`${API}/api/users/${userId}/approver`, { approverEmails })
+    setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
+  }
+
+  async function handleTeamUpdate(userId, team) {
+    const { data } = await axios.patch(`${API}/api/users/${userId}/team`, { team: team || null })
     setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
   }
 
@@ -414,6 +612,9 @@ function App() {
       // Re-fetch My Requests and balance from DB — don't patch state locally
       fetchUserRequests(user.id)
       fetchSummary(user.id)
+      // Point 4 — reactive approver view: remove the cancelled request immediately
+      // so the Approvals tab reflects the change without a manual refresh.
+      setPendingRequests(prev => prev.filter(r => r.id !== requestId))
     } catch (err) {
       const data = err.response?.data
       const msg = typeof data === 'string'
@@ -429,11 +630,20 @@ function App() {
     }
   }, [user?.id, user?.role, activeTab])
 
+  // Reset My Requests sort to "Requested ↓" every time the tab is opened
+  useEffect(() => {
+    if (activeTab === 'history') {
+      setHistorySort({ key: 'requestDate', dir: 'desc' })
+      setHistoryPage(1)
+    }
+  }, [activeTab])
+
   // ── Form handlers ──────────────────────────────────────────────────────────
 
   function handleClear() {
     setDateRange({ from: null, to: null })
     setLeaveType('')
+    setHalfDaySlot('')
     setReason('')
     setSubmitError('')
   }
@@ -452,7 +662,8 @@ function App() {
         userId: user.id,
         startDate,
         endDate,
-        type: LEAVE_TYPE_LABELS[leaveType] ?? leaveType,
+        type:        leaveType,           // send the canonical key (e.g. "annual", "home_office")
+        halfDaySlot: halfDaySlot || null, // null → NONE (full day) on the backend
       })
       setHistory((prev) => [{ ...data, status: data.status.toLowerCase() }, ...prev])
       fetchSummary(user.id)
@@ -473,10 +684,37 @@ function App() {
 
   const startISO         = dateRange?.from ? isoOf(dateRange.from) : ''
   const endISO           = dateRange?.to   ? isoOf(dateRange.to)   : ''
-  const previewDays      = countWorkdays(startISO, endISO)
-  const remainingAfter   = summary != null && previewDays != null
-    ? summary.remainingDays - previewDays
+  const isHalfDay        = halfDaySlot !== ''
+  const previewDays      = countWorkdays(startISO, endISO, isHalfDay)
+  // Available for NEW requests = total budget − used − pending − this preview request
+  // summary.available only subtracts used; subtract pending separately to avoid double-count.
+  const formAvailable    = summary != null
+    ? (summary.entitled ?? 0) + (summary.transferred ?? 0) + (summary.startingBalanceAdjustment ?? 0)
+      - (summary.used ?? 0) - (summary.pending ?? 0)
+    : 0
+  // Only annual leave affects the balance — never show balance impact for other types
+  const remainingAfter   = leaveType === 'annual' && summary != null && previewDays != null
+    ? formAvailable - previewDays
     : null
+
+  // Slot conflict: warn if the user already has an active request with the same slot
+  // on the selected end date (the day where the slot applies).
+  const slotConflict = useMemo(() => {
+    if (!halfDaySlot || !endISO) return null
+    const conflict = history.find(row => {
+      if (row.status === 'cancelled' || row.status === 'rejected') return false
+      // A conflict exists when an existing request covers the end date AND has the same slot
+      const rowSlot = row.halfDaySlot ?? 'NONE'
+      if (rowSlot !== halfDaySlot) return false
+      // The slot applies to the last day of the existing request
+      return row.endDate === endISO
+    })
+    if (!conflict) return null
+    return halfDaySlot === 'MORNING'
+      ? 'You already have a morning request on this date.'
+      : 'You already have an afternoon request on this date.'
+  }, [halfDaySlot, endISO, history])
+
   const totalDaysAccounted = history
     .filter((row) => row.status !== 'rejected' && row.status !== 'cancelled')
     .reduce((sum, row) => sum + row.totalDays, 0)
@@ -590,7 +828,7 @@ function App() {
       {/* ── Main ────────────────────────────────────────────────────────── */}
       <main id="main-content" className="max-w-5xl mx-auto px-6 py-6 space-y-6">
 
-        {/* Balance cards — always visible */}
+        {/* Balance summary strip — always visible */}
         <section id="entitlement-overview" aria-labelledby="entitlement-heading">
           <div className="mb-3 flex items-baseline justify-between">
             <h2 id="entitlement-heading" className="text-base font-semibold text-gray-800">
@@ -600,12 +838,7 @@ function App() {
               <time dateTime="2026-01-01/2026-12-31">1 Jan – 31 Dec 2026</time>
             </p>
           </div>
-          <ul role="list" aria-label="Leave balance summary" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <li><BalanceCard label="Entitled"  value={summary?.entitledDays  ?? 0} accent="blue"    /></li>
-            <li><BalanceCard label="Used"      value={summary?.usedDays      ?? 0} accent="violet"  /></li>
-            <li><BalanceCard label="Pending"   value={summary?.pendingDays   ?? 0} accent="amber"   /></li>
-            <li><BalanceCard label="Remaining" value={summary?.remainingDays ?? 0} accent="emerald" /></li>
-          </ul>
+          <BalanceSummary summary={summary} />
         </section>
 
         {/* Tab container */}
@@ -641,6 +874,64 @@ function App() {
                   <LeaveCalendar range={dateRange} onRangeChange={setDateRange} leaveDates={leaveDateMap} />
                 </div>
 
+                {/* Half-day controls — shown as soon as a start date is picked */}
+                {dateRange.from && (
+                  <div className="mb-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="half-day-toggle"
+                        type="checkbox"
+                        checked={isHalfDay}
+                        onChange={(e) => {
+                          const checked = e.target.checked
+                          setHalfDaySlot(checked ? 'MORNING' : '')
+                          // If no end date yet, auto-set it to the start date so the
+                          // user gets a single-day half-day without a second calendar click
+                          if (checked && !dateRange.to) {
+                            setDateRange(prev => ({ ...prev, to: prev.from }))
+                          }
+                        }}
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                      />
+                      <label htmlFor="half-day-toggle" className="text-sm text-gray-700 select-none cursor-pointer">
+                        {dateRange.to ? 'Half day on last date' : 'Half day'}
+                      </label>
+                      {!dateRange.to && !isHalfDay && (
+                        <span className="text-xs text-gray-400">— or click a second date for a range</span>
+                      )}
+                    </div>
+
+                    {/* MORNING / AFTERNOON slot picker */}
+                    {isHalfDay && (
+                      <div className="flex items-center gap-4 pl-6">
+                        <span className="text-xs text-gray-500 shrink-0">Slot:</span>
+                        {['MORNING', 'AFTERNOON'].map(slot => (
+                          <label key={slot} className="flex items-center gap-1.5 cursor-pointer select-none">
+                            <input
+                              type="radio"
+                              name="half-day-slot"
+                              value={slot}
+                              checked={halfDaySlot === slot}
+                              onChange={() => setHalfDaySlot(slot)}
+                              className="h-3.5 w-3.5 border-gray-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                            />
+                            <span className="text-sm text-gray-700">
+                              {slot === 'MORNING' ? '☀ Morning' : '🌙 Afternoon'}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Slot conflict warning */}
+                    {slotConflict && (
+                      <p role="alert" className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                        {slotConflict}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Live workday preview */}
                 {previewDays !== null && (
                   previewDays === 0 ? (
@@ -652,6 +943,11 @@ function App() {
                       <span>
                         This request will use{' '}
                         <strong>{previewDays} working day{previewDays !== 1 ? 's' : ''}</strong>.
+                        {isHalfDay && (
+                          <span className="ml-1 text-blue-600">
+                            ({halfDaySlot === 'MORNING' ? 'morning' : 'afternoon'} on last date)
+                          </span>
+                        )}
                       </span>
                       {remainingAfter !== null && (
                         <span className={`font-medium ${remainingAfter < 0 ? 'text-red-600' : 'text-blue-700'}`}>
@@ -719,7 +1015,7 @@ function App() {
                 <div className="mt-5 flex items-center gap-3">
                   <button
                     type="submit"
-                    disabled={submitting || !dateRange?.from || !dateRange?.to || !leaveType}
+                    disabled={submitting || !dateRange?.from || !dateRange?.to || !leaveType || !!slotConflict}
                     className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {submitting ? 'Submitting…' : 'Submit Request'}
@@ -790,7 +1086,7 @@ function App() {
                           <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.startDate}>{fmtDate(row.startDate)}</time></td>
                           <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.endDate}>{fmtDate(row.endDate)}</time></td>
                           <td className="py-3 pr-4 tabular-nums">{row.totalDays}</td>
-                          <td className="py-3 pr-4">{row.type}</td>
+                          <td className="py-3 pr-4">{formatLeaveType(row.type)}</td>
                           <td className="py-3 pr-4"><StatusBadge status={row.status} /></td>
                           <td className="py-3">
                             {(row.status === 'pending' ||
@@ -869,8 +1165,10 @@ function App() {
                   allUsers={allUsers}
                   usersLoading={usersLoading}
                   onSaveRole={handleRoleUpdate}
-                  onSaveEntitlement={handleEntitlementUpdate}
+                  onSaveBalance={handleBalanceUpdate}
                   onSaveApprovers={handleApproverSave}
+                  onSaveTeam={handleTeamUpdate}
+                  onRefreshUsers={fetchAllUsers}
                 />
               ) : (
                 <ApproverUsersView

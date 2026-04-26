@@ -50,18 +50,21 @@ public class LeaveController {
     public ResponseEntity<List<CalendarEventDto>> getCalendarEvents(
             @RequestParam String viewerId,
             @RequestParam int year,
-            @RequestParam int month) {
+            @RequestParam int month,
+            @RequestParam(required = false) String team) {
         try {
-            return ResponseEntity.ok(leaveService.getCalendarEvents(viewerId, year, month));
+            return ResponseEntity.ok(leaveService.getCalendarEvents(viewerId, year, month, team));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }
     }
 
     @GetMapping("/pending")
-    public ResponseEntity<List<PendingRequestDto>> getPendingRequests(@RequestParam String userId) {
+    public ResponseEntity<List<PendingRequestDto>> getPendingRequests(
+            @RequestParam String userId,
+            @RequestParam(required = false) String team) {
         try {
-            return ResponseEntity.ok(leaveService.getPendingRequests(userId));
+            return ResponseEntity.ok(leaveService.getPendingRequests(userId, team));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }

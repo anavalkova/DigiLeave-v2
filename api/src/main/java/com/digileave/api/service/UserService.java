@@ -1,8 +1,9 @@
 package com.digileave.api.service;
 
-import com.digileave.api.model.LeaveRequest;
+import com.digileave.api.model.AnnualLeaveBalance;
 import com.digileave.api.model.LeaveStatus;
 import com.digileave.api.model.Role;
+import com.digileave.api.model.Team;
 import com.digileave.api.model.User;
 import com.digileave.api.repository.LeaveRequestRepository;
 import com.digileave.api.repository.UserRepository;
@@ -17,12 +18,12 @@ import java.util.stream.Collectors;
 @Service
 public class UserService {
 
-    private final UserRepository userRepository;
+    private final UserRepository         userRepository;
     private final LeaveRequestRepository leaveRequestRepository;
 
     public UserService(UserRepository userRepository,
                        LeaveRequestRepository leaveRequestRepository) {
-        this.userRepository = userRepository;
+        this.userRepository         = userRepository;
         this.leaveRequestRepository = leaveRequestRepository;
     }
 
@@ -45,16 +46,56 @@ public class UserService {
     public User updateApprovers(String userId, List<String> approverEmails) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
-        List<String> sanitised = approverEmails == null ? new ArrayList<>() : new ArrayList<>(approverEmails);
-        sanitised.remove(user.getEmail()); // users must not be their own approver
+        List<String> sanitised = approverEmails == null
+                ? new ArrayList<>()
+                : new ArrayList<>(approverEmails);
+        sanitised.remove(user.getEmail());
         user.setApproverEmails(sanitised);
+        return userRepository.save(user);
+    }
+
+    /**
+     * Updates the two admin-settable components of the annual leave balance:
+     * {@code entitled} (the current-year quota) and
+     * {@code startingBalanceAdjustment} (manual sync with accounting).
+     *
+     * The {@code transferred} field is managed exclusively by
+     * {@link YearEndService#performRollover} and is never touched here.
+     * The {@code used} counter is recomputed from approved leave records
+     * to prevent drift.
+     */
+    public User adjustBalance(String userId, int entitled, int startingBalanceAdjustment) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found."));
+
+        AnnualLeaveBalance bal = getBalance(user);
+        bal.setEntitled(entitled);
+        bal.setStartingBalanceAdjustment(startingBalanceAdjustment);
+
+        // Recompute used from the ledger (double to support half-day requests)
+        double actualUsed = leaveRequestRepository
+                .findByUserIdAndStatus(userId, LeaveStatus.APPROVED)
+                .stream()
+                .filter(r -> LeaveService.affectsBalance(r.getType()))
+                .mapToDouble(lr -> lr.getTotalDays())
+                .sum();
+        bal.setUsed(actualUsed);
+
+        user.setAnnualLeave(bal);
+        return userRepository.save(user);
+    }
+
+    public User updateTeam(String userId, Team team) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found."));
+        user.setTeam(team);
         return userRepository.save(user);
     }
 
     /**
      * Returns the users visible to the requester:
      *   ADMIN    → all users
-     *   APPROVER → only users who list the requester's email as an approver
+     *   APPROVER → only their direct reports
      *   Others   → 403
      */
     public List<User> getManagedUsers(String requesterId) {
@@ -76,14 +117,14 @@ public class UserService {
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied.");
     }
 
-    public User updateEntitlement(String userId, int entitledDays) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found."));
-        user.setEntitledDays(entitledDays);
-        int usedDays = leaveRequestRepository
-                .findByUserIdAndStatus(userId, LeaveStatus.APPROVED)
-                .stream().mapToInt(LeaveRequest::getTotalDays).sum();
-        user.setRemainingDays(Math.max(0, entitledDays - usedDays));
-        return userRepository.save(user);
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /** Reads the balance, initialising from legacy fields on un-migrated documents. */
+    private AnnualLeaveBalance getBalance(User user) {
+        if (user.getAnnualLeave() != null) return user.getAnnualLeave();
+        AnnualLeaveBalance b = new AnnualLeaveBalance();
+        b.setEntitled(user.getEntitledDays());
+        b.setUsed(user.getUsedDays());
+        return b;
     }
 }
