@@ -1,5 +1,6 @@
 package com.digileave.api.dto;
 
+import jakarta.validation.constraints.Min;
 import lombok.Data;
 
 /**
@@ -10,6 +11,9 @@ import lombok.Data;
  */
 @Data
 public class BalanceAdjustmentDto {
+
+    @Min(0)
     private int entitled;
+
     private int startingBalanceAdjustment;
 }

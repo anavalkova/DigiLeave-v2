@@ -7,4 +7,5 @@ import lombok.Data;
 public class StatusUpdateDto {
 
     private LeaveStatus status;
+    private String      rejectionReason;
 }

@@ -1,6 +1,8 @@
 package com.digileave.api.dto;
 
 import com.digileave.api.model.HalfDaySlot;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.time.LocalDate;
@@ -8,9 +10,16 @@ import java.time.LocalDate;
 @Data
 public class LeaveRequestDto {
 
+    @NotBlank
     private String userId;
+
+    @NotNull
     private LocalDate startDate;
+
+    @NotNull
     private LocalDate endDate;
+
+    @NotBlank
     private String type;
 
     /**

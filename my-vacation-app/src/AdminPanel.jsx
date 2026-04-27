@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import Pagination, { PAGE_SIZE, SortableTh } from './Pagination'
+import { useColumnFilters, FilterToolbar, FilterRow } from './ColumnFilters'
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -136,6 +137,30 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
   )
 }
 
+// ─── Column filter config ─────────────────────────────────────────────────────
+
+const USER_COLS = [
+  { filter: { type: 'text', key: 'name'  } },
+  { filter: { type: 'text', key: 'email' } },
+  { filter: { type: 'select', key: 'role', options: [
+    { value: '',           label: 'All Roles'  },
+    { value: 'USER',       label: 'User'       },
+    { value: 'APPROVER',   label: 'Approver'   },
+    { value: 'ACCOUNTANT', label: 'Accountant' },
+    { value: 'ADMIN',      label: 'Admin'      },
+  ]}},
+  { filter: null },
+  { filter: null },
+  { filter: { type: 'select', key: 'team', options: [
+    { value: '',    label: 'All Teams' },
+    { value: 'OPR', label: 'OPR'      },
+    { value: 'DEV', label: 'DEV'      },
+  ]}},
+  { filter: null },
+]
+
+const USER_INITIAL = { name: '', email: '', role: '', team: '' }
+
 // ─── Admin panel ──────────────────────────────────────────────────────────────
 
 export default function AdminPanel({
@@ -151,23 +176,47 @@ export default function AdminPanel({
   const [rowEdits, setRowEdits]     = useState({})
   const [saving, setSaving]         = useState({})
   const [saveError, setSaveError]   = useState({})
-  const [toast, setToast]           = useState(null)       // { message, type }
-  const [approverWarn, setApproverWarn] = useState(null)   // userId pending confirmation
+  const [toast, setToast]           = useState(null)
+  const [approverWarn, setApproverWarn] = useState(null)
   const [page, setPage]             = useState(1)
   const [userSort, setUserSort]     = useState({ key: 'name', dir: 'asc' })
 
-  // ── Derived: managers list reflects pending role changes, not just saved state ──
-  // When you change a user's role to APPROVER in the dropdown (before saving),
-  // they immediately appear as an option in other rows' manager dropdowns.
+  const cf = useColumnFilters(USER_INITIAL)
+  useEffect(() => { setPage(1) }, [cf.raw])
+
+  // Managers dropdown always uses the full unfiltered list so role changes
+  // in pending edits still appear as approver options immediately.
   const managers = allUsers.filter((u) => {
     const effectiveRole = rowEdits[u.id]?.role ?? u.role ?? 'USER'
     return effectiveRole === 'ADMIN' || effectiveRole === 'APPROVER'
   })
 
+  // Client-side filtering keeps the manager dropdown working on the full set.
+  const filteredUsers = useMemo(() => {
+    const { name, email, role, team } = cf.raw
+    let result = allUsers
+
+    if (name) {
+      const lc = name.toLowerCase()
+      result = result.filter(u => (u.name ?? '').toLowerCase().includes(lc))
+    }
+    if (email) {
+      const lc = email.toLowerCase()
+      result = result.filter(u => (u.email ?? '').toLowerCase().includes(lc))
+    }
+    if (role) {
+      result = result.filter(u => (u.role ?? '') === role)
+    }
+    if (team) {
+      result = result.filter(u => (u.team ?? '') === team)
+    }
+    return result
+  }, [allUsers, cf.raw])
+
   // Users sorted by chosen column; paginated
   const sortedUsers = useMemo(() => {
     const { key, dir } = userSort
-    return [...allUsers].sort((a, b) => {
+    return [...filteredUsers].sort((a, b) => {
       let cmp
       if (key === 'entitled') {
         cmp = Number(a.annualLeave?.entitled ?? a.entitledDays ?? 0) - Number(b.annualLeave?.entitled ?? b.entitledDays ?? 0)
@@ -178,7 +227,7 @@ export default function AdminPanel({
       }
       return dir === 'asc' ? cmp : -cmp
     })
-  }, [allUsers, userSort])
+  }, [filteredUsers, userSort])
   const pagedUsers = sortedUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   function handleUserSort(key) {
@@ -279,8 +328,24 @@ export default function AdminPanel({
         />
       )}
 
+      <FilterToolbar
+        open={cf.open}
+        onToggle={() => cf.setOpen(o => !o)}
+        hasActive={cf.hasActive}
+        activeCount={cf.activeCount}
+        onClear={cf.clear}
+      />
+
       {usersLoading ? (
         <p className="text-sm text-gray-500 py-8 text-center">Loading users…</p>
+      ) : filteredUsers.length === 0 && cf.hasActive ? (
+        <div className="py-12 text-center">
+          <p className="text-sm text-gray-500">No users match your filters.</p>
+          <button type="button" onClick={cf.clear}
+            className="mt-2 text-sm font-medium text-blue-600 hover:underline">
+            Clear Filters
+          </button>
+        </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left text-gray-700">
@@ -294,6 +359,7 @@ export default function AdminPanel({
                 <SortableTh label="Team"    colKey="team"     sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
                 <th scope="col" className="py-3 font-medium"><span className="sr-only">Save</span></th>
               </tr>
+              {cf.open && <FilterRow columns={USER_COLS} filters={cf.raw} onUpdate={cf.update} />}
             </thead>
             <tbody className="divide-y divide-gray-100">
               {pagedUsers.map((u) => {

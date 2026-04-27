@@ -4,6 +4,7 @@ import com.digileave.api.dto.CalendarEventDto;
 import com.digileave.api.dto.LeaveRequestDto;
 import com.digileave.api.dto.LeaveSummaryDto;
 import com.digileave.api.dto.PendingRequestDto;
+import com.digileave.api.exception.ValidationException;
 import com.digileave.api.model.AnnualLeaveBalance;
 import com.digileave.api.model.HalfDaySlot;
 import com.digileave.api.model.LeaveRequest;
@@ -14,7 +15,9 @@ import com.digileave.api.model.User;
 import com.digileave.api.repository.LeaveRequestRepository;
 import com.digileave.api.repository.UserRepository;
 import com.digileave.api.util.BulgarianPublicHolidays;
+import com.digileave.api.util.XssUtils;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -33,11 +36,14 @@ public class LeaveService {
 
     private final LeaveRequestRepository leaveRequestRepository;
     private final UserRepository         userRepository;
+    private final AuditLogService        auditLogService;
 
     public LeaveService(LeaveRequestRepository leaveRequestRepository,
-                        UserRepository userRepository) {
+                        UserRepository userRepository,
+                        AuditLogService auditLogService) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository         = userRepository;
+        this.auditLogService        = auditLogService;
     }
 
     // ── Balance / type helpers ────────────────────────────────────────────────
@@ -89,30 +95,45 @@ public class LeaveService {
 
     // ── Request lifecycle ─────────────────────────────────────────────────────
 
+    /**
+     * Creates and persists a new leave request.
+     *
+     * Validation order:
+     * <ol>
+     *   <li>Authentication guard — userId must be present</li>
+     *   <li>Past-date guard — start date must not be in the past</li>
+     *   <li>Date-order sanity — end must not precede start</li>
+     *   <li>Slot-aware overlap check against PENDING and APPROVED requests</li>
+     *   <li>Workday count — request must span at least one working day</li>
+     *   <li>Balance check — only for annual-leave type</li>
+     * </ol>
+     *
+     * @param dto the incoming leave request payload
+     * @return the persisted {@link LeaveRequest}
+     * @throws ValidationException      for any business-rule violation
+     * @throws IllegalArgumentException if the user is not found
+     */
     public LeaveRequest createRequest(LeaveRequestDto dto) {
         if (dto.getUserId() == null || dto.getUserId().isBlank()) {
-            throw new IllegalArgumentException("User is not authenticated.");
+            throw new ValidationException("User is not authenticated.");
         }
 
         LocalDate startDate = dto.getStartDate();
         LocalDate endDate   = dto.getEndDate();
 
         if (startDate == null || endDate == null) {
-            throw new IllegalArgumentException("Start date and end date are required.");
+            throw new ValidationException("Start date and end date are required.");
         }
 
-        // 1. Past-date guard
         if (startDate.isBefore(LocalDate.now())) {
-            throw new IllegalArgumentException(
+            throw new ValidationException(
                     "Leave requests cannot be submitted for dates in the past.");
         }
 
-        // 2. Date-order sanity
         if (endDate.isBefore(startDate)) {
-            throw new IllegalArgumentException("End date cannot be before start date.");
+            throw new ValidationException("End date cannot be before start date.");
         }
 
-        // 3. Slot-aware overlap check (PENDING or APPROVED requests)
         HalfDaySlot newSlot = dto.getHalfDaySlot() != null ? dto.getHalfDaySlot() : HalfDaySlot.NONE;
 
         List<LeaveRequest> active = leaveRequestRepository.findByUserIdAndStatusIn(
@@ -122,20 +143,18 @@ public class LeaveService {
                 .anyMatch(existing -> conflictsWithSlot(existing, startDate, endDate, newSlot));
 
         if (overlaps) {
-            throw new IllegalArgumentException(
+            throw new ValidationException(
                     "You already have a leave request that overlaps with these dates and time slot.");
         }
 
-        // 4. Workday count — half-day on last date subtracts 0.5
         double totalDays = calculateWorkdays(startDate, endDate, dto.isHalfDay());
 
         if (totalDays <= 0) {
-            throw new IllegalArgumentException(
+            throw new ValidationException(
                     "The selected date range contains no working days " +
                     "(all days are weekends or public holidays).");
         }
 
-        // 5. Balance check — only for annual leave (Point 3: strict balance isolation)
         User user = userRepository.findById(dto.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
 
@@ -156,23 +175,21 @@ public class LeaveService {
                     .mapToDouble(LeaveRequest::getTotalDays)
                     .sum();
 
-            // Available = total granted − already committed
             double totalGranted  = bal.getEntitled() + bal.getTransferred() + bal.getStartingBalanceAdjustment();
             double availableDays = totalGranted - approvedDays - pendingDays;
 
             if (totalDays > availableDays) {
-                throw new IllegalArgumentException(
+                throw new ValidationException(
                         "Request exceeds your available leave balance of " + availableDays + " day(s)." +
                         " Note: days already pending count against your balance.");
             }
         }
 
-        // 6. Save
         LeaveRequest request = new LeaveRequest();
         request.setUserId(dto.getUserId());
         request.setStartDate(startDate);
         request.setEndDate(endDate);
-        request.setType(dto.getType());
+        request.setType(XssUtils.sanitize(dto.getType()));
         request.setStatus(LeaveStatus.PENDING);
         request.setTotalDays(totalDays);
         request.setHalfDay(dto.isHalfDay());
@@ -182,8 +199,47 @@ public class LeaveService {
         return leaveRequestRepository.save(request);
     }
 
-    public List<LeaveRequest> getRequestsByUser(String userId) {
-        return leaveRequestRepository.findByUserId(userId);
+    public List<LeaveRequest> getRequestsByUser(
+            String userId, String type, String status,
+            LocalDate requestDateFrom, LocalDate requestDateTo,
+            LocalDate startDateFrom, LocalDate startDateTo) {
+
+        List<LeaveRequest> requests = leaveRequestRepository.findByUserId(userId);
+
+        if (type != null && !type.isBlank()) {
+            String lc = type.toLowerCase();
+            requests = requests.stream()
+                    .filter(r -> r.getType() != null && r.getType().toLowerCase().equals(lc))
+                    .toList();
+        }
+        if (status != null && !status.isBlank()) {
+            try {
+                LeaveStatus s = LeaveStatus.valueOf(status.toUpperCase());
+                requests = requests.stream().filter(r -> r.getStatus() == s).toList();
+            } catch (IllegalArgumentException ignored) {}
+        }
+        if (requestDateFrom != null) {
+            requests = requests.stream()
+                    .filter(r -> r.getRequestDate() != null && !r.getRequestDate().isBefore(requestDateFrom))
+                    .toList();
+        }
+        if (requestDateTo != null) {
+            requests = requests.stream()
+                    .filter(r -> r.getRequestDate() != null && !r.getRequestDate().isAfter(requestDateTo))
+                    .toList();
+        }
+        if (startDateFrom != null) {
+            requests = requests.stream()
+                    .filter(r -> r.getStartDate() != null && !r.getStartDate().isBefore(startDateFrom))
+                    .toList();
+        }
+        if (startDateTo != null) {
+            requests = requests.stream()
+                    .filter(r -> r.getStartDate() != null && !r.getStartDate().isAfter(startDateTo))
+                    .toList();
+        }
+
+        return requests;
     }
 
     public LeaveSummaryDto getUserLeaveSummary(String userId) {
@@ -258,6 +314,7 @@ public class LeaveService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "User associated with this request was not found."));
 
+        LeaveStatus before = request.getStatus();
         request.setStatus(LeaveStatus.APPROVED);
         LeaveRequest saved = leaveRequestRepository.save(request);
 
@@ -266,31 +323,61 @@ public class LeaveService {
             syncUsed(user);
         }
 
+        String actorId = currentActorId();
+        auditLogService.log(actorId, request.getUserId(), "LEAVE_APPROVED",
+                Map.of("requestId", requestId, "status", before.name()),
+                Map.of("requestId", requestId, "status", LeaveStatus.APPROVED.name()));
+
         return saved;
+    }
+
+    /**
+     * Dispatches a status update to the appropriate lifecycle method.
+     *
+     * APPROVED and REJECTED have dedicated methods with ledger sync and audit logging.
+     * All other status transitions fall through to {@link #updateRequestStatus}.
+     *
+     * @param requestId the leave request ID
+     * @param newStatus the target status
+     * @return the updated {@link LeaveRequest}
+     */
+    public LeaveRequest processStatusUpdate(String requestId, LeaveStatus newStatus, String rejectionReason) {
+        return switch (newStatus) {
+            case APPROVED -> approveRequest(requestId);
+            case REJECTED -> rejectRequest(requestId, rejectionReason);
+            default       -> updateRequestStatus(requestId, newStatus);
+        };
     }
 
     /**
      * Cancels a leave request owned by requestingUserId.
      * If the request was APPROVED the ledger is recalculated.
-     * Point 4 — user self-cancellation: any user may cancel their own PENDING requests.
+     *
+     * Any user may cancel their own PENDING or future-APPROVED requests.
+     *
+     * @param requestId          the leave request ID
+     * @param requestingUserId   the ID of the user attempting the cancellation
+     * @return the cancelled {@link LeaveRequest}
+     * @throws IllegalArgumentException if the request is not found
+     * @throws ValidationException      if ownership, date, or status constraints are violated
      */
     public LeaveRequest cancelRequest(String requestId, String requestingUserId) {
         LeaveRequest request = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new IllegalArgumentException("Leave request not found."));
 
         if (!requestingUserId.equals(request.getUserId())) {
-            throw new IllegalArgumentException("You can only cancel your own requests.");
+            throw new ValidationException("You can only cancel your own requests.");
         }
 
         if (request.getStartDate().isBefore(LocalDate.now(SOFIA))) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            throw new ValidationException(
                     "Cannot cancel a request whose start date has already passed.");
         }
 
         LeaveStatus current = request.getStatus();
         if (current == LeaveStatus.CANCELLED) return request;
         if (current == LeaveStatus.REJECTED) {
-            throw new IllegalArgumentException("Rejected requests cannot be cancelled.");
+            throw new ValidationException("Rejected requests cannot be cancelled.");
         }
 
         boolean wasApproved = current == LeaveStatus.APPROVED;
@@ -301,26 +388,43 @@ public class LeaveService {
             userRepository.findById(request.getUserId()).ifPresent(this::syncUsed);
         }
 
+        auditLogService.log(requestingUserId, request.getUserId(), "LEAVE_CANCELLED",
+                Map.of("requestId", requestId, "status", current.name()),
+                Map.of("requestId", requestId, "status", LeaveStatus.CANCELLED.name()));
+
         return saved;
     }
 
     /**
-     * Rejects a leave request.
+     * Rejects a leave request, optionally recording a reason.
      * If the request was previously APPROVED the ledger is recalculated.
+     *
+     * @param requestId       the leave request to reject
+     * @param rejectionReason free-text reason from the approver; may be null or blank
      */
-    public LeaveRequest rejectRequest(String requestId) {
+    public LeaveRequest rejectRequest(String requestId, String rejectionReason) {
         LeaveRequest request = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new IllegalArgumentException("Leave request not found."));
 
         if (request.getStatus() == LeaveStatus.REJECTED) return request;
 
-        boolean wasApproved = request.getStatus() == LeaveStatus.APPROVED;
+        LeaveStatus before = request.getStatus();
+        boolean wasApproved = before == LeaveStatus.APPROVED;
         request.setStatus(LeaveStatus.REJECTED);
+        request.setRejectionReason(
+                (rejectionReason != null && !rejectionReason.isBlank())
+                        ? XssUtils.sanitize(rejectionReason.trim())
+                        : null);
         LeaveRequest saved = leaveRequestRepository.save(request);
 
         if (wasApproved && request.getUserId() != null && affectsBalance(request.getType())) {
             userRepository.findById(request.getUserId()).ifPresent(this::syncUsed);
         }
+
+        String actorId = currentActorId();
+        auditLogService.log(actorId, request.getUserId(), "LEAVE_REJECTED",
+                Map.of("requestId", requestId, "status", before.name()),
+                Map.of("requestId", requestId, "status", LeaveStatus.REJECTED.name()));
 
         return saved;
     }
@@ -333,7 +437,12 @@ public class LeaveService {
      * @param currentUserId  the caller's user ID
      * @param team           optional team filter (OPR / DEV); null means all teams
      */
-    public List<PendingRequestDto> getPendingRequests(String currentUserId, String team) {
+    public List<PendingRequestDto> getPendingRequests(
+            String currentUserId, String team,
+            String employeeName, String type, String status,
+            LocalDate requestDateFrom, LocalDate requestDateTo,
+            LocalDate startDateFrom, LocalDate startDateTo) {
+
         User caller = userRepository.findById(currentUserId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
 
@@ -346,18 +455,40 @@ public class LeaveService {
             return List.of();
         }
 
-        // Build a user map for name/email lookups (and team filtering)
         Map<String, User> userMap = userRepository.findAll().stream()
                 .collect(Collectors.toMap(User::getId, u -> u));
 
-        // Optional team filter
         Team teamFilter = parseTeam(team);
+        String empLc   = (employeeName != null && !employeeName.isBlank()) ? employeeName.toLowerCase() : null;
+        String typeLc  = (type        != null && !type.isBlank())          ? type.toLowerCase()         : null;
+
+        LeaveStatus statusFilter = null;
+        if (status != null && !status.isBlank()) {
+            try { statusFilter = LeaveStatus.valueOf(status.toUpperCase()); }
+            catch (IllegalArgumentException ignored) {}
+        }
+        final LeaveStatus finalStatus = statusFilter;
 
         return requests.stream()
                 .filter(req -> {
-                    if (teamFilter == null || req.getUserId() == null) return true;
-                    User submitter = userMap.get(req.getUserId());
-                    return submitter != null && teamFilter.equals(submitter.getTeam());
+                    User submitter = req.getUserId() != null ? userMap.get(req.getUserId()) : null;
+
+                    if (teamFilter != null && (submitter == null || !teamFilter.equals(submitter.getTeam()))) return false;
+
+                    if (empLc != null) {
+                        String n = submitter != null && submitter.getName() != null
+                                ? submitter.getName().toLowerCase() : "";
+                        if (!n.contains(empLc)) return false;
+                    }
+                    if (typeLc != null && !typeLc.equals(req.getType() != null ? req.getType().toLowerCase() : "")) return false;
+                    if (finalStatus != null && req.getStatus() != finalStatus) return false;
+
+                    if (requestDateFrom != null && (req.getRequestDate() == null || req.getRequestDate().isBefore(requestDateFrom))) return false;
+                    if (requestDateTo   != null && (req.getRequestDate() == null || req.getRequestDate().isAfter(requestDateTo)))   return false;
+                    if (startDateFrom   != null && (req.getStartDate()   == null || req.getStartDate().isBefore(startDateFrom)))   return false;
+                    if (startDateTo     != null && (req.getStartDate()   == null || req.getStartDate().isAfter(startDateTo)))      return false;
+
+                    return true;
                 })
                 .map(req -> {
                     User submitter = req.getUserId() != null ? userMap.get(req.getUserId()) : null;
@@ -553,5 +684,11 @@ public class LeaveService {
             return Set.of(slot.name());
         }
         return Set.of("MORNING", "AFTERNOON");
+    }
+
+    private static String currentActorId() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getPrincipal() == null) return "system";
+        return auth.getPrincipal().toString();
     }
 }

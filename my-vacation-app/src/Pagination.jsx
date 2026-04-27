@@ -8,7 +8,7 @@ export function SortableTh({ label, colKey, sortKey, sortDir, onSort, className 
     <th
       scope="col"
       onClick={() => onSort(colKey)}
-      className={`py-3 pr-4 font-medium cursor-pointer select-none whitespace-nowrap ${className ?? ''}`}
+      className={`font-medium cursor-pointer select-none whitespace-nowrap ${className ?? 'py-3 pr-4'}`}
     >
       <span className="inline-flex items-center gap-1 group">
         {label}

@@ -43,4 +43,6 @@ public class LeaveRequest {
     private LocalDate requestDate;
     /** Copied from User.approverEmails at submission time so the routing is immutable. */
     private List<String> approverEmails;
+    /** Optional free-text reason supplied by the approver when rejecting. */
+    private String rejectionReason;
 }

@@ -1,53 +1,53 @@
 import { useState, useEffect, useMemo } from 'react'
 import { GoogleLogin, googleLogout } from '@react-oauth/google'
-import axios from 'axios'
+import api from './api'
+import { setAccessToken, clearAccessToken, plainAxios } from './api'
 import AdminPanel from './AdminPanel'
 import ApproverView from './ApproverView'
 import ApproverUsersView from './ApproverUsersView'
+import AuditLog from './AuditLog'
 import LeaveCalendar, { isoOf, HOLIDAYS } from './LeaveCalendar'
 import StatusBadge from './StatusBadge'
 import TeamCalendar from './TeamCalendar'
-import Pagination, { PAGE_SIZE, SortableTh, sortRequests } from './Pagination'
+import BaseTable from './BaseTable'
+import { PAGE_SIZE, sortRequests } from './Pagination'
+import { useColumnFilters } from './ColumnFilters'
+import {
+  LEAVE_TYPE_OPTIONS, LEAVE_STATUS, ROLES,
+  formatLeaveType, normalizeLeaveType,
+} from './constants'
+import { useLeaveRequests }    from './useLeaveRequests'
+import { useApproverRequests } from './useApproverRequests'
+import { useUserManagement }   from './useUserManagement'
 import './App.css'
 
-// ─── API base URL ─────────────────────────────────────────────────────────────
-// Dev:  .env.development → http://localhost:8080
-// Prod: .env.production  → Cloud Run URL (written by deploy.sh)
 const API = import.meta.env.VITE_API_BASE_URL
 
-// ─── Static data ─────────────────────────────────────────────────────────────
+// ─── My Requests column + filter config ──────────────────────────────────────
 
-const LEAVE_TYPE_LABELS = {
-  annual:      'Annual Leave',
-  sick:        'Sick Leave',
-  unpaid:      'Unpaid Leave',
-  maternity:   'Maternity / Paternity',
-  home_office: 'Home Office',
-}
+const HIST_COLS = [
+  { label: 'Requested', colKey: 'requestDate', filter: { type: 'daterange', fromKey: 'requestDateFrom', toKey: 'requestDateTo' } },
+  { label: 'Start',     colKey: 'startDate',   filter: { type: 'daterange', fromKey: 'startDateFrom',   toKey: 'startDateTo'   } },
+  { label: 'End',       colKey: 'endDate',     filter: null },
+  { label: 'Days',      colKey: 'totalDays',   filter: null },
+  { label: 'Type',      colKey: 'type',        filter: { type: 'select', key: 'type', options: [
+    { value: '', label: 'All Types' },
+    ...LEAVE_TYPE_OPTIONS,
+  ]}},
+  { label: 'Status',    colKey: 'status',      filter: { type: 'select', key: 'status', options: [
+    { value: '',                              label: 'All Statuses' },
+    { value: LEAVE_STATUS.PENDING.toLowerCase(),   label: 'Pending'   },
+    { value: LEAVE_STATUS.APPROVED.toLowerCase(),  label: 'Approved'  },
+    { value: LEAVE_STATUS.REJECTED.toLowerCase(),  label: 'Rejected'  },
+    { value: LEAVE_STATUS.CANCELLED.toLowerCase(), label: 'Cancelled' },
+  ]}},
+  { label: '', colKey: null, filter: null },
+]
 
-// Legacy label → canonical key map (for records stored before the key-based format)
-const LEGACY_TYPE_MAP = {
-  'annual leave':          'annual',
-  'sick leave':            'sick',
-  'unpaid leave':          'unpaid',
-  'maternity / paternity': 'maternity',
-  'home office':           'home_office',
-}
-
-/**
- * Normalise a leave type string to its canonical key (e.g. "Annual Leave" → "annual").
- * Handles both the current key format and legacy label format transparently.
- */
-function normalizeType(type) {
-  if (!type) return ''
-  const lower = type.toLowerCase().trim()
-  return LEGACY_TYPE_MAP[lower] ?? lower
-}
-
-/** Return a human-readable label for any type string, regardless of storage format. */
-function formatLeaveType(type) {
-  const key = normalizeType(type)
-  return LEAVE_TYPE_LABELS[key] ?? type ?? '—'
+const HIST_INITIAL = {
+  requestDateFrom: '', requestDateTo: '',
+  startDateFrom:   '', startDateTo:   '',
+  type: '', status: '',
 }
 
 // Holiday set kept in LeaveCalendar.jsx (single source of truth for frontend).
@@ -342,31 +342,161 @@ function AuthSection({ onSuccess, onError, error, loading }) {
   )
 }
 
-// ─── Tab bar ─────────────────────────────────────────────────────────────────
+// ─── Nav icons ───────────────────────────────────────────────────────────────
 
-function TabBar({ tabs, activeTab, onSelect }) {
+const mkIcon = (d) => ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+  </svg>
+)
+
+const IconTeamCalendar = mkIcon('M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z')
+const IconRequestLeave = mkIcon('M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z')
+const IconMyRequests   = mkIcon('M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01')
+const IconApprovals    = mkIcon('M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z')
+const IconUsers        = mkIcon('M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z')
+const IconLogs         = mkIcon('M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z')
+const IconMenu         = mkIcon('M4 6h16M4 12h16M4 18h16')
+const IconChevronLeft  = mkIcon('M15 19l-7-7 7-7')
+const IconChevronRight = mkIcon('M9 5l7 7-7 7')
+const IconLogout       = mkIcon('M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1')
+
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+
+function Sidebar({ navItems, activeTab, onSelect, user, onSignOut, isOpen, onClose, collapsed, onToggleCollapse }) {
   return (
-    <div className="border-b border-gray-200" role="tablist" aria-label="Dashboard sections">
-      <div className="flex gap-1">
-        {tabs.map(({ id, label }) => (
+    <>
+      {/* Mobile backdrop */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/40 lg:hidden"
+          aria-hidden="true"
+          onClick={onClose}
+        />
+      )}
+
+      <aside
+        aria-label="Main navigation"
+        className={`fixed inset-y-0 left-0 z-30 flex flex-col bg-gray-50 border-r border-gray-200
+          transition-all duration-200 ease-in-out
+          ${collapsed ? 'w-16' : 'w-64'}
+          ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
+      >
+        {/* Brand row */}
+        <div className="flex h-14 shrink-0 items-center border-b border-gray-200 px-3">
+          {!collapsed && (
+            <span className="flex-1 truncate text-lg font-extrabold tracking-tight text-blue-600">
+              Digileave
+            </span>
+          )}
+          {collapsed && (
+            <span className="flex-1 text-center text-lg font-extrabold tracking-tight text-blue-600">
+              D
+            </span>
+          )}
+          {/* Collapse toggle — desktop only */}
           <button
-            key={id}
-            role="tab"
-            id={`tab-${id}`}
-            aria-selected={activeTab === id}
-            aria-controls={`tabpanel-${id}`}
-            onClick={() => onSelect(id)}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 ${
-              activeTab === id
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
+            type="button"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={onToggleCollapse}
+            className="hidden lg:flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-200 hover:text-gray-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
-            {label}
+            {collapsed
+              ? <IconChevronRight className="h-4 w-4" />
+              : <IconChevronLeft  className="h-4 w-4" />
+            }
           </button>
-        ))}
-      </div>
-    </div>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto px-2 py-4">
+          {navItems.map(item => {
+            const active = activeTab === item.id
+            return (
+              <button
+                key={item.id}
+                type="button"
+                title={collapsed ? item.label : undefined}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => { onSelect(item.id); onClose() }}
+                className={`mb-0.5 flex w-full items-center rounded-lg border-l-[3px] px-2.5 py-2.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500
+                  ${collapsed ? 'justify-center gap-0' : 'gap-3'}
+                  ${active
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                  }`}
+              >
+                <div className="relative shrink-0">
+                  <item.icon className="h-5 w-5" />
+                  {/* Badge dot in collapsed mode */}
+                  {collapsed && item.badge > 0 && (
+                    <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-blue-600" />
+                  )}
+                </div>
+                {!collapsed && (
+                  <>
+                    <span className="flex-1 text-left">{item.label}</span>
+                    {item.badge > 0 && (
+                      <span className="ml-auto inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold leading-none text-white tabular-nums">
+                        {item.badge}
+                      </span>
+                    )}
+                  </>
+                )}
+              </button>
+            )
+          })}
+        </nav>
+
+        {/* User block */}
+        <div className={`shrink-0 border-t border-gray-200 p-3 ${collapsed ? 'flex flex-col items-center gap-2' : ''}`}>
+          {collapsed ? (
+            <>
+              {user.picture ? (
+                <img src={user.picture} alt="" referrerPolicy="no-referrer"
+                  className="h-8 w-8 rounded-full object-cover" />
+              ) : (
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">
+                  {initials(user.name)}
+                </span>
+              )}
+              <button
+                type="button"
+                title="Sign out"
+                onClick={onSignOut}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-200 hover:text-red-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <IconLogout className="h-4 w-4" />
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex min-w-0 items-center gap-3">
+                {user.picture ? (
+                  <img src={user.picture} alt="" referrerPolicy="no-referrer"
+                    className="h-8 w-8 shrink-0 rounded-full object-cover" />
+                ) : (
+                  <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">
+                    {initials(user.name)}
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-gray-800">{user.name}</p>
+                  <p className="truncate text-xs text-gray-400 capitalize">{user.role?.toLowerCase()}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="mt-3 w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+              >
+                Sign out
+              </button>
+            </>
+          )}
+        </div>
+      </aside>
+    </>
   )
 }
 
@@ -381,41 +511,64 @@ function App() {
       return null
     }
   })
-  const [authError, setAuthError]     = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
-  const [history, setHistory]         = useState([])
-  const [historyLoading, setHistoryLoading] = useState(
+  // true while we attempt a silent token refresh on page load
+  const [initializing, setInitializing] = useState(
     () => !!localStorage.getItem('digileave_user')
   )
-  const [historyError, setHistoryError] = useState('')
-  const [summary, setSummary]           = useState(null)
+  const [authError, setAuthError]     = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
 
-  // Active tab: 'team' | 'request' | 'history' | 'approvals' | 'users'
+  // Active tab: 'team' | 'request' | 'history' | 'approvals' | 'users' | 'logs'
   const [activeTab, setActiveTab] = useState('team')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem('sidebar-collapsed') === 'true'
+  )
+
+  function toggleCollapsed() {
+    setCollapsed(prev => {
+      const next = !prev
+      localStorage.setItem('sidebar-collapsed', String(next))
+      return next
+    })
+  }
   const [historyPage, setHistoryPage] = useState(1)
   const [historySort, setHistorySort] = useState({ key: 'requestDate', dir: 'desc' })
-
-  // Admin state
-  const [allUsers, setAllUsers]         = useState([])
-  const [usersLoading, setUsersLoading] = useState(false)
-
-  // Approver — read-only team members list
-  const [managedUsers, setManagedUsers]           = useState([])
-  const [managedUsersLoading, setManagedUsersLoading] = useState(false)
-
-  // Approver/admin state
-  const [pendingRequests, setPendingRequests] = useState([])
-  const [pendingLoading, setPendingLoading]   = useState(false)
+  const histCf = useColumnFilters(HIST_INITIAL)
 
   // Form fields
   const [dateRange, setDateRange]     = useState({ from: null, to: null })
   const [leaveType, setLeaveType]     = useState('')
-  // '' = no half-day, 'MORNING' or 'AFTERNOON' = specific slot
-  const [halfDaySlot, setHalfDaySlot] = useState('')
+  const [halfDaySlot, setHalfDaySlot] = useState('')  // '' | 'MORNING' | 'AFTERNOON'
   const [reason, setReason]           = useState('')
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting]   = useState(false)
-  const [cancelError, setCancelError] = useState('')
+
+  // ── Domain hooks ──────────────────────────────────────────────────────────
+
+  const leaveHook    = useLeaveRequests(user?.id)
+  const approverHook = useApproverRequests(user?.id)
+  const userMgmtHook = useUserManagement(user)
+
+  const {
+    history, summary, loading: historyLoading, historyError,
+    cancelError, setCancelError, fetchSummary, cancelRequest, submitRequest, leaveDateMap,
+  } = leaveHook
+
+  const {
+    requests: pendingRequests, loading: pendingLoading,
+    pendingCount, fetchRequests: fetchPendingRequests,
+    approveRequest, rejectRequest,
+  } = approverHook
+
+  const {
+    allUsers, managedUsers, usersLoading, managedUsersLoading,
+    fetchAllUsers, fetchManagedUsers,
+    updateRole: handleRoleUpdate,
+    updateBalance: handleBalanceUpdate,
+    updateApprovers: handleApproverSave,
+    updateTeam: handleTeamUpdate,
+  } = userMgmtHook
 
   // ── Auth handlers ──────────────────────────────────────────────────────────
 
@@ -423,12 +576,13 @@ function App() {
     setAuthError('')
     setAuthLoading(true)
     try {
-      const { data } = await axios.post(`${API}/api/auth/google`, {
+      const { data } = await api.post(`${API}/api/auth/google`, {
         idToken: credentialResponse.credential,
       })
-      setHistoryLoading(true)
-      localStorage.setItem('digileave_user', JSON.stringify(data))
-      setUser(data)
+      const { accessToken, user: loggedInUser } = data
+      setAccessToken(accessToken)
+      localStorage.setItem('digileave_user', JSON.stringify(loggedInUser))
+      setUser(loggedInUser)
       window.scrollTo({ top: 0, behavior: 'instant' })
     } catch (err) {
       if (err.code === 'ERR_NETWORK' || !err.response) {
@@ -445,198 +599,101 @@ function App() {
     setAuthError('Google sign-in was cancelled or failed. Please try again.')
   }
 
-  function handleSignOut() {
+  function doSignOut() {
+    clearAccessToken()
     googleLogout()
     localStorage.removeItem('digileave_user')
     setUser(null)
-    setHistory([])
-    setSummary(null)
-    setAllUsers([])
-    setPendingRequests([])
     window.scrollTo({ top: 0, behavior: 'instant' })
   }
 
-  // ── Leave history & summary fetch ──────────────────────────────────────────
-
-  async function fetchUserRequests(userId) {
-    setHistoryLoading(true)
-    setHistoryError('')
-    try {
-      const { data } = await axios.get(`${API}/api/leave/user/${userId}`)
-      setHistory(data.map((item) => ({ ...item, status: item.status.toLowerCase() })))
-      setHistoryPage(1)
-    } catch (err) {
-      if (err.response) {
-        setHistoryError('Could not load your leave history. Please refresh to try again.')
-      }
-    } finally {
-      setHistoryLoading(false)
-    }
+  function handleSignOut() {
+    api.post(`${API}/api/auth/logout`).catch(() => {})
+    doSignOut()
   }
 
-  async function fetchSummary(userId) {
-    try {
-      const { data } = await axios.get(`${API}/api/leave/summary/${userId}`)
-      setSummary(data)
-    } catch {
-      // non-critical — cards will show 0 until next successful fetch
-    }
-  }
-
+  // Listen for the auth-expired event dispatched by the api.js interceptor
   useEffect(() => {
-    if (user?.id) {
-      fetchUserRequests(user.id)
-      fetchSummary(user.id)
-    }
-  }, [user?.id])
+    window.addEventListener('auth-expired', doSignOut)
+    return () => window.removeEventListener('auth-expired', doSignOut)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Silent profile refresh ─────────────────────────────────────────────────
-  // Runs once on mount. If an admin changed this user's role since their last
-  // login, the updated role is pulled from the DB and written back to state +
-  // localStorage — no logout required.
+  // ── Token + profile refresh on page load ──────────────────────────────────
+  // On every page load we attempt a silent token refresh using the HttpOnly
+  // refresh cookie.  If it fails the session has expired → force re-login.
+  // On success we also pull the latest profile so role changes take effect.
   useEffect(() => {
-    if (!user?.id) return
-    axios.get(`${API}/api/users/${user.id}`)
+    if (!initializing) return
+    plainAxios.post(`${API}/api/auth/refresh`)
+      .then(({ data }) => {
+        setAccessToken(data.accessToken)
+        return api.get(`${API}/api/users/${user.id}`)
+      })
       .then(({ data }) => {
         const refreshed = {
           ...user,
-          role:          data.role,
-          entitledDays:  data.entitledDays,
-          remainingDays: data.remainingDays,
-          usedDays:      data.usedDays,
+          role:           data.role,
           approverEmails: data.approverEmails,
+          annualLeave:    data.annualLeave,
         }
-        // Only update state (and trigger a re-render) if something actually changed
         if (JSON.stringify(refreshed) !== JSON.stringify(user)) {
           localStorage.setItem('digileave_user', JSON.stringify(refreshed))
           setUser(refreshed)
         }
       })
-      .catch(() => { /* keep the cached profile — backend may be starting up */ })
+      .catch(() => {
+        clearAccessToken()
+        localStorage.removeItem('digileave_user')
+        setUser(null)
+      })
+      .finally(() => setInitializing(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Admin functions ────────────────────────────────────────────────────────
-
-  async function fetchAllUsers() {
-    setUsersLoading(true)
-    try {
-      const { data } = await axios.get(`${API}/api/users`)
-      setAllUsers(data)
-    } catch {
-      // non-critical
-    } finally {
-      setUsersLoading(false)
-    }
-  }
-
-  async function fetchManagedUsers(userId) {
-    setManagedUsersLoading(true)
-    try {
-      const { data } = await axios.get(`${API}/api/users/managed?requesterId=${userId}`)
-      setManagedUsers(data)
-    } catch {
-      // non-critical
-    } finally {
-      setManagedUsersLoading(false)
-    }
-  }
-
-  async function handleRoleUpdate(userId, role) {
-    // Let the error propagate — AdminPanel.saveRow only clears edits on success
-    const { data } = await axios.patch(`${API}/api/users/${userId}/role`, { role })
-    setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
-  }
-
-  async function handleBalanceUpdate(userId, entitled, startingBalanceAdjustment) {
-    const { data } = await axios.patch(`${API}/api/users/${userId}/balance`, { entitled, startingBalanceAdjustment })
-    setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
-  }
-
-  async function handleApproverSave(userId, approverEmails) {
-    const { data } = await axios.patch(`${API}/api/users/${userId}/approver`, { approverEmails })
-    setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
-  }
-
-  async function handleTeamUpdate(userId, team) {
-    const { data } = await axios.patch(`${API}/api/users/${userId}/team`, { team: team || null })
-    setAllUsers((prev) => prev.map((u) => u.id === userId ? data : u))
-  }
+  // ── Side effects for data loading ─────────────────────────────────────────
 
   useEffect(() => {
-    if (user?.role === 'ADMIN') fetchAllUsers()
-  }, [user?.id])
+    if (user?.role === ROLES.ADMIN) fetchAllUsers()
+  }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (user?.id && user?.role === 'APPROVER' && activeTab === 'users') {
-      fetchManagedUsers(user.id)
+    if (user?.id && user?.role === ROLES.APPROVER && activeTab === 'users') {
+      fetchManagedUsers()
     }
-  }, [user?.id, user?.role, activeTab])
-
-  async function fetchPendingRequests(userId) {
-    setPendingLoading(true)
-    try {
-      const { data } = await axios.get(`${API}/api/leave/pending?userId=${userId}`)
-      setPendingRequests(data)
-    } catch {
-      // non-critical
-    } finally {
-      setPendingLoading(false)
-    }
-  }
-
-  async function handleApprove(requestId) {
-    try {
-      await axios.patch(`${API}/api/leave/${requestId}/status`, { status: 'APPROVED' })
-      // Re-fetch so the approvals table and balance cards reflect the DB truth
-      fetchPendingRequests(user.id)
-      fetchSummary(user.id)
-    } catch {
-      // silently ignore — table re-fetches on next tab visit
-    }
-  }
-
-  async function handleReject(requestId) {
-    try {
-      await axios.patch(`${API}/api/leave/${requestId}/status`, { status: 'REJECTED' })
-      fetchPendingRequests(user.id)
-      fetchSummary(user.id)
-    } catch {
-      // silently ignore
-    }
-  }
-
-  async function handleCancel(requestId) {
-    setCancelError('')
-    try {
-      await axios.patch(`${API}/api/leave/${requestId}/cancel?userId=${user.id}`)
-      // Re-fetch My Requests and balance from DB — don't patch state locally
-      fetchUserRequests(user.id)
-      fetchSummary(user.id)
-      // Point 4 — reactive approver view: remove the cancelled request immediately
-      // so the Approvals tab reflects the change without a manual refresh.
-      setPendingRequests(prev => prev.filter(r => r.id !== requestId))
-    } catch (err) {
-      const data = err.response?.data
-      const msg = typeof data === 'string'
-        ? data
-        : data?.message || `Request failed (HTTP ${err.response?.status ?? 'network error'})`
-      setCancelError(msg)
-    }
-  }
+  }, [user?.id, user?.role, activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (user?.id && (user?.role === 'ADMIN' || user?.role === 'APPROVER')) {
-      fetchPendingRequests(user.id)
+    if (user?.id && (user?.role === ROLES.ADMIN || user?.role === ROLES.APPROVER)) {
+      fetchPendingRequests()
     }
-  }, [user?.id, user?.role, activeTab])
+  }, [user?.id, user?.role, activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset My Requests sort to "Requested ↓" every time the tab is opened
+  // Reset My Requests sort + filter every time the tab is opened
   useEffect(() => {
     if (activeTab === 'history') {
       setHistorySort({ key: 'requestDate', dir: 'desc' })
       setHistoryPage(1)
+      histCf.clear()
+      histCf.setOpen(false)
     }
-  }, [activeTab])
+  }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { setHistoryPage(1) }, [histCf.raw])
+
+  // ── Approval callbacks ─────────────────────────────────────────────────────
+
+  function handleApprovalFilterChange(filterParams) {
+    if (user?.id && canApprove) fetchPendingRequests(filterParams)
+  }
+
+  async function handleApprove(requestId) {
+    await approveRequest(requestId)
+    fetchSummary()
+  }
+
+  async function handleReject(requestId, reason) {
+    await rejectRequest(requestId, reason)
+    fetchSummary()
+  }
 
   // ── Form handlers ──────────────────────────────────────────────────────────
 
@@ -652,29 +709,22 @@ function App() {
     e.preventDefault()
     if (!dateRange?.from || !dateRange?.to || !leaveType) return
 
-    const startDate = isoOf(dateRange.from)
-    const endDate   = isoOf(dateRange.to)
-
     setSubmitError('')
     setSubmitting(true)
     try {
-      const { data } = await axios.post(`${API}/api/leave/request`, {
-        userId: user.id,
-        startDate,
-        endDate,
-        type:        leaveType,           // send the canonical key (e.g. "annual", "home_office")
-        halfDaySlot: halfDaySlot || null, // null → NONE (full day) on the backend
+      await submitRequest({
+        startDate:   isoOf(dateRange.from),
+        endDate:     isoOf(dateRange.to),
+        type:        leaveType,
+        halfDaySlot: halfDaySlot || null,
       })
-      setHistory((prev) => [{ ...data, status: data.status.toLowerCase() }, ...prev])
-      fetchSummary(user.id)
       handleClear()
       setHistoryPage(1)
       setActiveTab('history')
     } catch (err) {
-      const msg = err.response?.status === 422
-        ? err.response.data
-        : 'Could not submit your request. Please try again.'
-      setSubmitError(msg)
+      const data = err.response?.data
+      setSubmitError(data?.message ?? (typeof data === 'string' ? data : null)
+        ?? 'Could not submit your request. Please try again.')
     } finally {
       setSubmitting(false)
     }
@@ -715,14 +765,26 @@ function App() {
       : 'You already have an afternoon request on this date.'
   }, [halfDaySlot, endISO, history])
 
-  const totalDaysAccounted = history
+  // My Requests — filtered client-side, sorted, then paginated
+  const filteredHistory = useMemo(() => {
+    const f = histCf.raw
+    let result = history
+    if (f.type)   result = result.filter(r => normalizeLeaveType(r.type) === f.type)
+    if (f.status) result = result.filter(r => (r.status ?? '').toLowerCase() === f.status)
+    if (f.requestDateFrom) result = result.filter(r => r.requestDate >= f.requestDateFrom)
+    if (f.requestDateTo)   result = result.filter(r => r.requestDate <= f.requestDateTo)
+    if (f.startDateFrom)   result = result.filter(r => r.startDate   >= f.startDateFrom)
+    if (f.startDateTo)     result = result.filter(r => r.startDate   <= f.startDateTo)
+    return result
+  }, [history, histCf.raw])
+
+  const totalDaysAccounted = filteredHistory
     .filter((row) => row.status !== 'rejected' && row.status !== 'cancelled')
     .reduce((sum, row) => sum + row.totalDays, 0)
 
-  // My Requests — sorted by chosen column, then paginated
   const sortedHistory = useMemo(
-    () => sortRequests(history, historySort.key, historySort.dir),
-    [history, historySort]
+    () => sortRequests(filteredHistory, historySort.key, historySort.dir),
+    [filteredHistory, historySort]
   )
   const pagedHistory = sortedHistory.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE)
 
@@ -735,24 +797,15 @@ function App() {
     setHistoryPage(1)
   }
 
-  // Map of ISO date → 'approved' | 'pending' for marking existing leave on the calendar
-  const leaveDateMap = useMemo(() => {
-    const map = {}
-    history.forEach(req => {
-      if (req.status === 'rejected' || req.status === 'cancelled') return
-      const cur = new Date(req.startDate + 'T00:00:00')
-      const end = new Date(req.endDate   + 'T00:00:00')
-      while (cur <= end) {
-        const iso = isoOf(cur)
-        // Approved takes precedence if the same date appears in two requests
-        if (!map[iso] || map[iso] === 'pending') map[iso] = req.status
-        cur.setDate(cur.getDate() + 1)
-      }
-    })
-    return map
-  }, [history])
-
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  if (initializing) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-sm text-gray-400">Loading…</p>
+      </div>
+    )
+  }
 
   if (!user) {
     return (
@@ -765,86 +818,70 @@ function App() {
     )
   }
 
-  // ── Debug: verify the env var is reaching the component ──────────────────
-  console.log('Client ID loaded:', import.meta.env.VITE_GOOGLE_CLIENT_ID)
+  const canApprove = user.role === ROLES.ADMIN || user.role === ROLES.APPROVER
 
-  const canApprove = user.role === 'ADMIN' || user.role === 'APPROVER'
-  const pendingCount = pendingRequests.filter((r) => r.status === 'PENDING').length
-
-  const tabs = [
-    { id: 'team',     label: 'Team Calendar' },
-    { id: 'request',  label: 'Request Leave' },
-    { id: 'history',  label: 'My Requests' },
-    ...(canApprove ? [{ id: 'approvals', label: pendingCount > 0 ? `Approvals (${pendingCount})` : 'Approvals' }] : []),
-    ...(canApprove ? [{ id: 'users', label: 'Users' }] : []),
+  const navItems = [
+    { id: 'team',      label: 'Team Calendar',  icon: IconTeamCalendar },
+    { id: 'request',   label: 'Request Leave',   icon: IconRequestLeave },
+    { id: 'history',   label: 'My Requests',     icon: IconMyRequests   },
+    ...(canApprove ? [{ id: 'approvals', label: 'Approvals', icon: IconApprovals, badge: pendingCount }] : []),
+    ...(canApprove ? [{ id: 'users',     label: 'Users',     icon: IconUsers }] : []),
+    ...(user.role === ROLES.ADMIN ? [{ id: 'logs', label: 'System Logs', icon: IconLogs }] : []),
   ]
 
   return (
-    <div id="app" className="min-h-screen bg-gray-50">
+    <div id="app" className="flex h-screen overflow-hidden bg-gray-100">
 
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <header
-        id="site-header"
-        role="banner"
-        className="bg-white border-b border-gray-200 sticky top-0 z-10"
-      >
-        <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
-          <h1 className="text-xl font-extrabold text-blue-600 tracking-tight shrink-0">
-            Digileave
-          </h1>
+      <Sidebar
+        navItems={navItems}
+        activeTab={activeTab}
+        onSelect={setActiveTab}
+        user={user}
+        onSignOut={handleSignOut}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        collapsed={collapsed}
+        onToggleCollapse={toggleCollapsed}
+      />
 
-          <div id="user-info" aria-label="Signed-in user" className="flex items-center gap-3">
-            {user.picture ? (
-              <img
-                src={user.picture}
-                alt={user.name}
-                referrerPolicy="no-referrer"
-                className="h-8 w-8 rounded-full object-cover"
-              />
-            ) : (
-              <span
-                aria-hidden="true"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-bold select-none"
-              >
-                {initials(user.name)}
-              </span>
-            )}
+      {/* ── Content shell ──────────────────────────────────────────────── */}
+      <div className={`flex flex-1 flex-col overflow-hidden transition-all duration-200 ${collapsed ? 'lg:pl-16' : 'lg:pl-64'}`}>
 
-            <span className="hidden sm:inline text-sm font-medium text-gray-700">
-              {user.name}
-            </span>
+        {/* Mobile top bar — hamburger only, hidden on desktop */}
+        <header
+          role="banner"
+          className="flex h-14 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4 lg:hidden"
+        >
+          <button
+            type="button"
+            aria-label="Open navigation menu"
+            onClick={() => setSidebarOpen(true)}
+            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            <IconMenu className="h-5 w-5" />
+          </button>
+          <span className="text-base font-extrabold tracking-tight text-blue-600">Digileave</span>
+        </header>
 
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 transition-colors"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+        {/* ── Scrollable content ─────────────────────────────────────── */}
+        <main id="main-content" className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 space-y-6">
 
-      {/* ── Main ────────────────────────────────────────────────────────── */}
-      <main id="main-content" className="max-w-5xl mx-auto px-6 py-6 space-y-6">
+            {/* Balance summary strip */}
+            <section id="entitlement-overview" aria-labelledby="entitlement-heading">
+              <div className="mb-3 flex items-baseline justify-between">
+                <h2 id="entitlement-heading" className="text-base font-semibold text-gray-800">
+                  My Leave Balance
+                </h2>
+                <p className="text-xs text-gray-400">
+                  <time dateTime="2026-01-01/2026-12-31">1 Jan – 31 Dec 2026</time>
+                </p>
+              </div>
+              <BalanceSummary summary={summary} />
+            </section>
 
-        {/* Balance summary strip — always visible */}
-        <section id="entitlement-overview" aria-labelledby="entitlement-heading">
-          <div className="mb-3 flex items-baseline justify-between">
-            <h2 id="entitlement-heading" className="text-base font-semibold text-gray-800">
-              My Leave Balance
-            </h2>
-            <p className="text-xs text-gray-400">
-              <time dateTime="2026-01-01/2026-12-31">1 Jan – 31 Dec 2026</time>
-            </p>
-          </div>
-          <BalanceSummary summary={summary} />
-        </section>
-
-        {/* Tab container */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-
-          <TabBar tabs={tabs} activeTab={activeTab} onSelect={setActiveTab} />
+            {/* Panel container */}
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
 
           {/* ── Request Leave tab ──────────────────────────────────────── */}
           {activeTab === 'request' && (
@@ -1040,85 +1077,78 @@ function App() {
               aria-labelledby="tab-history"
               className="p-6"
             >
-              {historyLoading ? (
-                <p className="text-sm text-gray-500 py-8 text-center">Loading your leave requests…</p>
-              ) : historyError ? (
+              {historyError ? (
                 <p role="alert" className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
                   {historyError}
                 </p>
-              ) : history.length === 0 ? (
-                <div className="py-12 text-center">
-                  <p className="text-sm text-gray-500">No requests yet.</p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('request')}
-                    className="mt-3 text-sm font-medium text-blue-600 hover:underline"
-                  >
-                    Submit your first request →
-                  </button>
-                </div>
               ) : (
-                <div role="region" aria-label="Leave request history" tabIndex="0" className="overflow-x-auto">
+                <>
                   {cancelError && (
                     <p role="alert" className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
                       {cancelError}
                     </p>
                   )}
-                  <table className="w-full text-sm text-left text-gray-700">
-                    <caption className="sr-only">
-                      All leave requests submitted during the current leave year.
-                    </caption>
-                    <thead>
-                      <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
-                        <SortableTh label="Requested" colKey="requestDate" sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
-                        <SortableTh label="Start"     colKey="startDate"   sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
-                        <SortableTh label="End"       colKey="endDate"     sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
-                        <SortableTh label="Days"      colKey="totalDays"   sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
-                        <SortableTh label="Type"      colKey="type"        sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
-                        <SortableTh label="Status"    colKey="status"      sortKey={historySort.key} sortDir={historySort.dir} onSort={handleHistorySort} />
-                        <th scope="col" className="py-3 font-medium"><span className="sr-only">Actions</span></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {pagedHistory.map((row) => (
-                        <tr key={row.id} className="hover:bg-gray-50 transition-colors">
-                          <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.requestDate}>{fmtDate(row.requestDate)}</time></td>
-                          <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.startDate}>{fmtDate(row.startDate)}</time></td>
-                          <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.endDate}>{fmtDate(row.endDate)}</time></td>
-                          <td className="py-3 pr-4 tabular-nums">{row.totalDays}</td>
-                          <td className="py-3 pr-4">{formatLeaveType(row.type)}</td>
-                          <td className="py-3 pr-4"><StatusBadge status={row.status} /></td>
-                          <td className="py-3">
-                            {(row.status === 'pending' ||
-                              (row.status === 'approved' &&
-                               new Date(row.startDate + 'T00:00:00') > new Date())) && (
-                              <button
-                                type="button"
-                                onClick={() => handleCancel(row.id)}
-                                aria-label={`Cancel request dated ${fmtDate(row.requestDate)}`}
-                                className="text-red-500 hover:underline text-xs font-medium"
-                              >
-                                Cancel
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-gray-200 bg-gray-50 text-xs font-semibold text-gray-600">
-                        <td colSpan="3" className="py-3 pr-4">Total days accounted</td>
-                        <td colSpan="4" className="py-3 tabular-nums">{totalDaysAccounted}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                  <Pagination
+                  <BaseTable
+                    columns={HIST_COLS}
+                    sort={historySort}
+                    onSort={handleHistorySort}
+                    filters={histCf.raw}
+                    onFilterUpdate={histCf.update}
+                    filterOpen={histCf.open}
+                    onFilterToggle={() => histCf.setOpen(o => !o)}
+                    hasActiveFilters={histCf.hasActive}
+                    activeFilterCount={histCf.activeCount}
+                    onFilterClear={histCf.clear}
                     page={historyPage}
                     total={sortedHistory.length}
-                    pageSize={PAGE_SIZE}
-                    onChange={setHistoryPage}
-                  />
-                </div>
+                    onPageChange={setHistoryPage}
+                    loading={historyLoading}
+                    isEmpty={history.length === 0}
+                    emptyMessage="No requests yet."
+                    emptyHint={
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('request')}
+                        className="mt-3 text-sm font-medium text-blue-600 hover:underline"
+                      >
+                        Submit your first request →
+                      </button>
+                    }
+                    footer={
+                      <tfoot>
+                        <tr className="border-t-2 border-gray-200 bg-gray-50 text-xs font-semibold text-gray-600">
+                          <td colSpan="3" className="py-3 pr-4">Total days accounted</td>
+                          <td colSpan="4" className="py-3 tabular-nums">{totalDaysAccounted}</td>
+                        </tr>
+                      </tfoot>
+                    }
+                  >
+                    {pagedHistory.map((row) => (
+                      <tr key={row.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.requestDate}>{fmtDate(row.requestDate)}</time></td>
+                        <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.startDate}>{fmtDate(row.startDate)}</time></td>
+                        <td className="py-3 pr-4 whitespace-nowrap"><time dateTime={row.endDate}>{fmtDate(row.endDate)}</time></td>
+                        <td className="py-3 pr-4 tabular-nums">{row.totalDays}</td>
+                        <td className="py-3 pr-4">{formatLeaveType(row.type)}</td>
+                        <td className="py-3 pr-4"><StatusBadge status={row.status} /></td>
+                        <td className="py-3">
+                          {(row.status === 'pending' ||
+                            (row.status === 'approved' &&
+                             new Date(row.startDate + 'T00:00:00') > new Date())) && (
+                            <button
+                              type="button"
+                              onClick={() => cancelRequest(row.id)}
+                              aria-label={`Cancel request dated ${fmtDate(row.requestDate)}`}
+                              className="text-red-500 hover:underline text-xs font-medium"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </BaseTable>
+                </>
               )}
             </div>
           )}
@@ -1131,7 +1161,7 @@ function App() {
               aria-labelledby="tab-team"
               className="p-6"
             >
-              <TeamCalendar userId={user.id} api={API} />
+              <TeamCalendar userId={user.id} />
             </div>
           )}
 
@@ -1148,6 +1178,7 @@ function App() {
                 loading={pendingLoading}
                 onApprove={handleApprove}
                 onReject={handleReject}
+                onFetchRequests={handleApprovalFilterChange}
               />
             </div>
           )}
@@ -1160,7 +1191,7 @@ function App() {
               aria-labelledby="tab-users"
               className="p-6"
             >
-              {user.role === 'ADMIN' ? (
+              {user.role === ROLES.ADMIN ? (
                 <AdminPanel
                   allUsers={allUsers}
                   usersLoading={usersLoading}
@@ -1179,18 +1210,32 @@ function App() {
             </div>
           )}
 
-        </div>
+          {/* ── System Logs tab (ADMIN only) ────────────────────────────── */}
+          {activeTab === 'logs' && user.role === ROLES.ADMIN && (
+            <div
+              id="tabpanel-logs"
+              role="tabpanel"
+              aria-labelledby="tab-logs"
+            >
+              <div className="px-6 py-4 border-b border-gray-100">
+                <h2 className="text-sm font-semibold text-gray-700">System Audit Log</h2>
+                <p className="mt-0.5 text-xs text-gray-400">
+                  Read-only record of balance changes and leave status transitions.
+                </p>
+              </div>
+              <AuditLog />
+            </div>
+          )}
 
-      </main>
+            </div>
 
-      <footer
-        id="site-footer"
-        role="contentinfo"
-        className="border-t border-gray-200 mt-8 py-5 text-center text-xs text-gray-400"
-      >
-        <p>&copy; <time dateTime="2026">2026</time> Digileave. All rights reserved.</p>
-      </footer>
+            <footer role="contentinfo" className="py-4 text-center text-xs text-gray-400">
+              &copy; <time dateTime="2026">2026</time> Digileave. All rights reserved.
+            </footer>
 
+          </div>
+        </main>
+      </div>
     </div>
   )
 }

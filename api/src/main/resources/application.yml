@@ -8,6 +8,21 @@ spring:
   jackson:
     serialization:
       write-dates-as-timestamps: false
+  mail:
+    host:     ${SMTP_HOST:smtp.gmail.com}
+    port:     ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth:            true
+          starttls:
+            enable:        true
+            required:      true
+          connectiontimeout: 5000
+          timeout:           5000
+          writetimeout:      5000
 
 google:
   # Empty-string default lets the app start so the @PostConstruct check
@@ -18,3 +33,12 @@ google:
 # Override with the ALLOWED_ORIGINS environment variable in production.
 cors:
   allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173}
+
+jwt:
+  # Must be at least 32 characters (256 bits) for HS256.
+  # Set JWT_SECRET env var in Cloud Run — never commit a real value here.
+  secret: ${JWT_SECRET:dev-secret-change-me-in-production-32chars}
+  access-token-expiry-ms: 900000   # 15 minutes
+  refresh-token-expiry-days: 7
+  # Set to false for local HTTP development; always true in production.
+  cookie-secure: ${JWT_COOKIE_SECURE:true}

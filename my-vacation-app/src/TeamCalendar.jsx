@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react' // useEffect used by main component
-import axios from 'axios'
+import axios from './api'
 import { HOLIDAYS } from './LeaveCalendar'
 
 // ─── Type-based colour palette ────────────────────────────────────────────────
@@ -298,7 +298,7 @@ function Legend() {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function TeamCalendar({ userId, api }) {
+export default function TeamCalendar({ userId }) {
   const today    = useMemo(() => new Date(), [])
   const todayIso = isoOf(today.getFullYear(), today.getMonth(), today.getDate())
 
@@ -317,11 +317,11 @@ export default function TeamCalendar({ userId, api }) {
     const params = { viewerId: userId, year: viewYear, month: viewMonth + 1 }
     if (teamFilter) params.team = teamFilter
     axios
-      .get(`${api}/api/leave/calendar`, { params })
+      .get('/api/leave/calendar', { params })
       .then(({ data }) => setEvents(data))
       .catch(() => setError('Could not load team calendar. Please try again.'))
       .finally(() => setLoading(false))
-  }, [userId, viewYear, viewMonth, teamFilter, api])
+  }, [userId, viewYear, viewMonth, teamFilter])
 
   /** Expand each event across every day it covers → iso → [events] */
   const eventsByDay = useMemo(() => {

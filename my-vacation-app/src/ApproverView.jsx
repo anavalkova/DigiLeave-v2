@@ -1,23 +1,91 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import StatusBadge from './StatusBadge'
-import Pagination, { PAGE_SIZE, SortableTh, sortRequests } from './Pagination'
+import BaseTable from './BaseTable'
+import { PAGE_SIZE, sortRequests } from './Pagination'
+import { useColumnFilters } from './ColumnFilters'
+import { LEAVE_TYPE_OPTIONS, formatLeaveType, LEAVE_STATUS } from './constants'
 
-// Type display helpers (mirrors App.jsx logic — normalises legacy label format)
-const LEAVE_TYPE_LABELS = {
-  annual: 'Annual Leave', sick: 'Sick Leave', unpaid: 'Unpaid Leave',
-  maternity: 'Maternity / Paternity', home_office: 'Home Office',
-}
-const LEGACY_TYPE_MAP = {
-  'annual leave': 'annual', 'sick leave': 'sick', 'unpaid leave': 'unpaid',
-  'maternity / paternity': 'maternity', 'home office': 'home_office',
-}
-function formatLeaveType(type) {
-  if (!type) return '—'
-  const key = LEGACY_TYPE_MAP[type.toLowerCase().trim()] ?? type.toLowerCase().trim()
-  return LEAVE_TYPE_LABELS[key] ?? type
+// ── Icons ─────────────────────────────────────────────────────────────────────
+
+const IconCheck = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+  </svg>
+)
+
+const IconXMark = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+  </svg>
+)
+
+// ── RejectModal ───────────────────────────────────────────────────────────────
+
+function RejectModal({ req, onConfirm, onCancel }) {
+  const [reason, setReason] = useState('')
+  const textareaRef = useRef(null)
+
+  useEffect(() => {
+    textareaRef.current?.focus()
+  }, [])
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    onConfirm(req.id, reason)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="reject-modal-title"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel() }}
+    >
+      <div className="w-full max-w-md rounded-xl bg-white shadow-xl ring-1 ring-black/10 p-6">
+        <h2 id="reject-modal-title" className="text-base font-semibold text-gray-900 mb-1">
+          Reject request
+        </h2>
+        <p className="text-sm text-gray-500 mb-4">
+          {req.userName} &mdash; {req.totalDays} day{req.totalDays !== 1 ? 's' : ''} from{' '}
+          <time dateTime={req.startDate}>{fmtDate(req.startDate)}</time>
+        </p>
+        <form onSubmit={handleSubmit}>
+          <label htmlFor="reject-reason" className="block text-sm font-medium text-gray-700 mb-1">
+            Reason <span className="text-gray-400 font-normal">(optional)</span>
+          </label>
+          <textarea
+            id="reject-reason"
+            ref={textareaRef}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            placeholder="Let the employee know why their request was rejected…"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent resize-none"
+          />
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="rounded-lg px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            >
+              Reject
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
 }
 
-/** Format ISO date string as "3 Feb 2026" */
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function fmtDate(iso) {
   const [y, m, d] = iso.split('-').map(Number)
   return new Date(y, m - 1, d).toLocaleDateString('en-GB', {
@@ -25,15 +93,63 @@ function fmtDate(iso) {
   })
 }
 
-/**
- * Audit-log table for admins and approvers.
- * Shows ALL requests (all statuses). Approve/Reject actions only appear on PENDING rows.
- */
-export default function ApproverView({ requests, loading, onApprove, onReject }) {
-  const [page, setPage]   = useState(1)
-  const [sort, setSort]   = useState({ key: 'requestDate', dir: 'desc' })
+// ── Column definitions ────────────────────────────────────────────────────────
 
-  // Reset to first page whenever the requests list changes
+const COLUMNS = [
+  { label: 'Employee',  colKey: 'userName',     width: '22%', filter: { type: 'text', key: 'employeeName' } },
+  { label: 'Requested', colKey: 'requestDate',  width: '13%', filter: { type: 'daterange', fromKey: 'requestDateFrom', toKey: 'requestDateTo' } },
+  { label: 'Start',     colKey: 'startDate',    width: '13%', filter: { type: 'daterange', fromKey: 'startDateFrom',   toKey: 'startDateTo'   } },
+  { label: 'End',       colKey: 'endDate',      width: '13%', filter: null },
+  { label: 'Days',      colKey: 'totalDays',    width: '6%',  filter: null },
+  { label: 'Type',      colKey: 'type',         width: '16%', filter: { type: 'select', key: 'type', options: [
+    { value: '', label: 'All Types' },
+    ...LEAVE_TYPE_OPTIONS,
+  ]}},
+  { label: 'Status',    colKey: 'status',       width: '11%', filter: { type: 'select', key: 'status', options: [
+    { value: '',                    label: 'All Statuses' },
+    { value: LEAVE_STATUS.PENDING,  label: 'Pending'     },
+    { value: LEAVE_STATUS.APPROVED, label: 'Approved'    },
+    { value: LEAVE_STATUS.REJECTED, label: 'Rejected'    },
+    { value: LEAVE_STATUS.CANCELLED,label: 'Cancelled'   },
+  ]}},
+  { label: '', colKey: null, width: '6%', filter: null },
+]
+
+const INITIAL_FILTERS = {
+  employeeName:    '',
+  requestDateFrom: '', requestDateTo: '',
+  startDateFrom:   '', startDateTo:   '',
+  type:   '',
+  status: '',
+}
+
+const CELL = 'px-4 py-3'
+
+/**
+ * Approvals table.
+ *
+ * Receives server-filtered {@code requests} as a prop. When the debounced column
+ * filters change it calls {@code onFetchRequests(params)} so App.jsx can re-fetch
+ * with the new query parameters.
+ */
+export default function ApproverView({ requests, loading, onApprove, onReject, onFetchRequests }) {
+  const [page,        setPage]        = useState(1)
+  const [sort,        setSort]        = useState({ key: 'requestDate', dir: 'desc' })
+  const [rejectingReq, setRejectingReq] = useState(null)
+  const cf                            = useColumnFilters(INITIAL_FILTERS)
+
+  const handleRejectConfirm = useCallback((requestId, reason) => {
+    setRejectingReq(null)
+    onReject(requestId, reason)
+  }, [onReject])
+
+  const fetchRef = useRef(onFetchRequests)
+  useEffect(() => { fetchRef.current = onFetchRequests }, [onFetchRequests])
+
+  useEffect(() => {
+    fetchRef.current?.(cf.debounced)
+  }, [cf.debounced]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => { setPage(1) }, [requests])
 
   function handleSort(key) {
@@ -45,96 +161,86 @@ export default function ApproverView({ requests, loading, onApprove, onReject })
     setPage(1)
   }
 
-  if (loading) {
-    return <p className="text-sm text-gray-500 py-8 text-center">Loading requests…</p>
-  }
-
-  if (requests.length === 0) {
-    return (
-      <div className="py-12 text-center">
-        <p className="text-sm font-medium text-gray-600">No requests yet</p>
-        <p className="text-xs text-gray-400 mt-1">Requests submitted by your team will appear here.</p>
-      </div>
-    )
-  }
-
   const sorted = sortRequests(requests, sort.key, sort.dir)
   const paged  = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
-  const th = (label, colKey) => (
-    <SortableTh
-      label={label}
-      colKey={colKey}
-      sortKey={sort.key}
-      sortDir={sort.dir}
-      onSort={handleSort}
-    />
-  )
-
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm text-left text-gray-700">
-        <thead>
-          <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
-            {th('Employee',  'userName')}
-            {th('Requested', 'requestDate')}
-            {th('Start',     'startDate')}
-            {th('End',       'endDate')}
-            {th('Days',      'totalDays')}
-            {th('Type',      'type')}
-            {th('Status',    'status')}
-            <th scope="col" className="py-3 font-medium"><span className="sr-only">Actions</span></th>
+    <>
+    {rejectingReq && (
+      <RejectModal
+        req={rejectingReq}
+        onConfirm={handleRejectConfirm}
+        onCancel={() => setRejectingReq(null)}
+      />
+    )}
+    <BaseTable
+      columns={COLUMNS}
+      cellPad={CELL}
+      sort={sort}
+      onSort={handleSort}
+      filters={cf.raw}
+      onFilterUpdate={cf.update}
+      filterOpen={cf.open}
+      onFilterToggle={() => cf.setOpen(o => !o)}
+      hasActiveFilters={cf.hasActive}
+      activeFilterCount={cf.activeCount}
+      onFilterClear={cf.clear}
+      page={page}
+      total={sorted.length}
+      onPageChange={setPage}
+      loading={loading}
+      isEmpty={requests.length === 0}
+      emptyMessage="No requests yet"
+      emptyHint="Requests submitted by your team will appear here."
+    >
+      {paged.map(req => {
+        const isPending = req.status === LEAVE_STATUS.PENDING
+        return (
+          <tr key={req.id} className="hover:bg-gray-50 transition-colors">
+            <td className={CELL}>
+              <p className="font-medium text-gray-800 truncate">{req.userName}</p>
+              <p className="text-[11px] text-gray-400 truncate">{req.userEmail}</p>
+            </td>
+            <td className={`${CELL} whitespace-nowrap`}>
+              <time dateTime={req.requestDate}>{fmtDate(req.requestDate)}</time>
+            </td>
+            <td className={`${CELL} whitespace-nowrap`}>
+              <time dateTime={req.startDate}>{fmtDate(req.startDate)}</time>
+            </td>
+            <td className={`${CELL} whitespace-nowrap`}>
+              <time dateTime={req.endDate}>{fmtDate(req.endDate)}</time>
+            </td>
+            <td className={`${CELL} tabular-nums`}>{req.totalDays}</td>
+            <td className={CELL}>{formatLeaveType(req.type)}</td>
+            <td className={CELL}>
+              <StatusBadge status={req.status.toLowerCase()} />
+            </td>
+            <td className={CELL}>
+              {isPending && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onApprove(req.id)}
+                    title="Approve"
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-green-600 hover:bg-green-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500"
+                  >
+                    <IconCheck className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRejectingReq(req)}
+                    title="Reject"
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-red-500 hover:bg-red-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                  >
+                    <IconXMark className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+            </td>
           </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {paged.map((req) => {
-            const isPending = req.status === 'PENDING'
-            return (
-              <tr key={req.id} className="hover:bg-gray-50 transition-colors">
-                <td className="py-3 pr-4">
-                  <p className="font-medium text-gray-800">{req.userName}</p>
-                  <p className="text-xs text-gray-400">{req.userEmail}</p>
-                </td>
-                <td className="py-3 pr-4 whitespace-nowrap">
-                  <time dateTime={req.requestDate}>{fmtDate(req.requestDate)}</time>
-                </td>
-                <td className="py-3 pr-4 whitespace-nowrap">
-                  <time dateTime={req.startDate}>{fmtDate(req.startDate)}</time>
-                </td>
-                <td className="py-3 pr-4 whitespace-nowrap">
-                  <time dateTime={req.endDate}>{fmtDate(req.endDate)}</time>
-                </td>
-                <td className="py-3 pr-4 tabular-nums">{req.totalDays}</td>
-                <td className="py-3 pr-4">{formatLeaveType(req.type)}</td>
-                <td className="py-3 pr-4">
-                  <StatusBadge status={req.status.toLowerCase()} />
-                </td>
-                <td className="py-3">
-                  {isPending && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onApprove(req.id)}
-                        className="rounded-md bg-green-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-700 transition-colors"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onReject(req.id)}
-                        className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      <Pagination page={page} total={sorted.length} pageSize={PAGE_SIZE} onChange={setPage} />
-    </div>
+        )
+      })}
+    </BaseTable>
+    </>
   )
 }
