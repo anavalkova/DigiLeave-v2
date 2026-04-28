@@ -24,6 +24,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -37,13 +38,16 @@ public class LeaveService {
     private final LeaveRequestRepository leaveRequestRepository;
     private final UserRepository         userRepository;
     private final AuditLogService        auditLogService;
+    private final EmailService           emailService;
 
     public LeaveService(LeaveRequestRepository leaveRequestRepository,
                         UserRepository userRepository,
-                        AuditLogService auditLogService) {
+                        AuditLogService auditLogService,
+                        EmailService emailService) {
         this.leaveRequestRepository = leaveRequestRepository;
         this.userRepository         = userRepository;
         this.auditLogService        = auditLogService;
+        this.emailService           = emailService;
     }
 
     // ── Balance / type helpers ────────────────────────────────────────────────
@@ -196,7 +200,9 @@ public class LeaveService {
         request.setHalfDaySlot(newSlot);
         request.setRequestDate(LocalDate.now());
         request.setApproverEmails(user.getApproverEmails());
-        return leaveRequestRepository.save(request);
+        LeaveRequest saved = leaveRequestRepository.save(request);
+        notifyManagersOfNewRequest(saved, user);
+        return saved;
     }
 
     public List<LeaveRequest> getRequestsByUser(
@@ -328,6 +334,7 @@ public class LeaveService {
                 Map.of("requestId", requestId, "status", before.name()),
                 Map.of("requestId", requestId, "status", LeaveStatus.APPROVED.name()));
 
+        notifyEmployeeOfDecision(saved, user, LeaveStatus.APPROVED, null, actorId);
         return saved;
     }
 
@@ -426,6 +433,8 @@ public class LeaveService {
                 Map.of("requestId", requestId, "status", before.name()),
                 Map.of("requestId", requestId, "status", LeaveStatus.REJECTED.name()));
 
+        userRepository.findById(request.getUserId()).ifPresent(employee ->
+                notifyEmployeeOfDecision(saved, employee, LeaveStatus.REJECTED, saved.getRejectionReason(), actorId));
         return saved;
     }
 
@@ -684,6 +693,64 @@ public class LeaveService {
             return Set.of(slot.name());
         }
         return Set.of("MORNING", "AFTERNOON");
+    }
+
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("d MMM yyyy");
+
+    private void notifyManagersOfNewRequest(LeaveRequest request, User employee) {
+        List<String> approverEmails = request.getApproverEmails();
+        if (approverEmails == null || approverEmails.isEmpty()) return;
+        String subject = employee.getName() + " has submitted a leave request";
+        String body    = buildNewRequestBody(request, employee);
+        String replyTo = employee.getEmail();
+        for (String to : approverEmails) {
+            emailService.sendHtmlEmail(to, subject, body, replyTo);
+        }
+    }
+
+    private void notifyEmployeeOfDecision(LeaveRequest request, User employee,
+                                          LeaveStatus decision, String rejectionReason,
+                                          String actorId) {
+        String employeeEmail = employee.getEmail();
+        if (employeeEmail == null || employeeEmail.isBlank()) return;
+        String replyTo  = userRepository.findById(actorId).map(User::getEmail).orElse(null);
+        boolean approved = decision == LeaveStatus.APPROVED;
+        String subject  = approved ? "Your leave request has been approved"
+                                   : "Your leave request has been rejected";
+        emailService.sendHtmlEmail(employeeEmail, subject,
+                buildDecisionBody(request, approved, rejectionReason), replyTo);
+    }
+
+    private static String buildNewRequestBody(LeaveRequest r, User employee) {
+        String dates = r.getStartDate().equals(r.getEndDate())
+                ? r.getStartDate().format(DATE_FMT)
+                : r.getStartDate().format(DATE_FMT) + " – " + r.getEndDate().format(DATE_FMT);
+        return "<p>" + employee.getName() + " has submitted a leave request:</p>" +
+               "<ul>" +
+               "<li><b>Type:</b> " + r.getType() + "</li>" +
+               "<li><b>Dates:</b> " + dates + "</li>" +
+               "<li><b>Days:</b> " + r.getTotalDays() + "</li>" +
+               "</ul>" +
+               "<p>Please log in to review and approve or reject the request.</p>";
+    }
+
+    private static String buildDecisionBody(LeaveRequest r, boolean approved, String rejectionReason) {
+        String dates = r.getStartDate().equals(r.getEndDate())
+                ? r.getStartDate().format(DATE_FMT)
+                : r.getStartDate().format(DATE_FMT) + " – " + r.getEndDate().format(DATE_FMT);
+        StringBuilder sb = new StringBuilder();
+        sb.append("<p>Your leave request has been <b>")
+          .append(approved ? "approved" : "rejected")
+          .append("</b>:</p>")
+          .append("<ul>")
+          .append("<li><b>Type:</b> ").append(r.getType()).append("</li>")
+          .append("<li><b>Dates:</b> ").append(dates).append("</li>")
+          .append("<li><b>Days:</b> ").append(r.getTotalDays()).append("</li>")
+          .append("</ul>");
+        if (!approved && rejectionReason != null && !rejectionReason.isBlank()) {
+            sb.append("<p><b>Reason:</b> ").append(rejectionReason).append("</p>");
+        }
+        return sb.toString();
     }
 
     private static String currentActorId() {

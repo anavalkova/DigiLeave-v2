@@ -284,61 +284,226 @@ function BalanceSummary({ summary }) {
   )
 }
 
-// ─── Auth / landing page ─────────────────────────────────────────────────────
+// ─── Landing page helpers ─────────────────────────────────────────────────────
+
+function CalendarMockup() {
+  const days  = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+  const dates = ['4',   '5',   '6',   '7',   '8'  ]
+  const rows  = [
+    { init: 'AP', bg: 'bg-blue-100 text-blue-700',    active: [0,1,2],    bar: 'bg-emerald-100 border-emerald-200 text-emerald-700', label: 'Annual Leave'  },
+    { init: 'MT', bg: 'bg-purple-100 text-purple-700', active: [],         bar: null,                                                  label: null            },
+    { init: 'JK', bg: 'bg-teal-100 text-teal-700',    active: [2,3],      bar: 'bg-cyan-100 border-cyan-200 text-cyan-700',          label: 'Home Office'   },
+    { init: 'SR', bg: 'bg-amber-100 text-amber-700',  active: [1,2,3,4],  bar: 'bg-amber-50 border-amber-200 text-amber-700',        label: 'Pending…'      },
+  ]
+
+  return (
+    <div className="relative w-full max-w-md select-none pointer-events-none">
+      <div className="absolute -inset-6 rounded-3xl bg-gradient-to-br from-blue-50 to-indigo-50 blur-2xl opacity-70" />
+      <div className="relative rounded-2xl overflow-hidden bg-white border border-gray-200/60 shadow-2xl">
+
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3.5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <svg className="h-4 w-4 text-white/80" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <span className="text-sm font-semibold text-white">Team Calendar</span>
+          </div>
+          <span className="text-xs text-white/60 font-medium">May 2026</span>
+        </div>
+
+        <div className="p-4">
+          <div className="grid grid-cols-[40px_repeat(5,1fr)] mb-2">
+            <div />
+            {days.map((d, i) => (
+              <div key={d} className="text-center">
+                <div className="text-[10px] font-medium text-gray-400">{d}</div>
+                <div className="text-[11px] font-semibold text-gray-600">{dates[i]}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-1.5">
+            {rows.map((row, ri) => (
+              <div key={ri} className="grid grid-cols-[40px_repeat(5,1fr)] items-center gap-0.5">
+                <div className={`h-7 w-7 rounded-full flex items-center justify-center text-[10px] font-bold ${row.bg}`}>
+                  {row.init}
+                </div>
+                {[0,1,2,3,4].map(di => {
+                  const on      = row.active.includes(di)
+                  const hasPrev = row.active.includes(di - 1)
+                  const hasNext = row.active.includes(di + 1)
+                  const isFirst = on && !hasPrev
+                  return (
+                    <div
+                      key={di}
+                      className={[
+                        'h-7 flex items-center text-[9px] font-medium border',
+                        on
+                          ? `${row.bar} ${!hasPrev ? 'rounded-l-md' : 'rounded-l-none border-l-0'} ${!hasNext ? 'rounded-r-md' : 'rounded-r-none'}`
+                          : 'bg-gray-50 border-transparent rounded-md',
+                      ].join(' ')}
+                    >
+                      {isFirst && row.label && (
+                        <span className="px-1.5 truncate leading-none">{row.label}</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="border-t border-gray-100 px-5 py-2.5 flex flex-wrap gap-3">
+          {[
+            { c: 'bg-emerald-400', l: 'Approved'    },
+            { c: 'bg-cyan-400',    l: 'Home Office'  },
+            { c: 'bg-amber-400',   l: 'Pending'      },
+          ].map(({ c, l }) => (
+            <span key={l} className="flex items-center gap-1.5 text-[11px] text-gray-400">
+              <span className={`h-2 w-2 rounded-full ${c}`} />
+              {l}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FeatureCard({ icon, title, description }) {
+  return (
+    <div className="rounded-2xl bg-white border border-gray-100 shadow-sm p-6 space-y-4 hover:shadow-md transition-shadow">
+      <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+        {icon}
+      </div>
+      <div>
+        <h3 className="text-sm font-semibold text-gray-800 mb-1">{title}</h3>
+        <p className="text-sm text-gray-500 leading-relaxed">{description}</p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Auth / landing page ──────────────────────────────────────────────────────
 
 function AuthSection({ onSuccess, onError, error, loading }) {
   return (
-    <section
-      id="auth-section"
-      aria-labelledby="auth-heading"
-      className="min-h-screen bg-gray-50 flex items-center justify-center px-4"
-    >
-      <div className="w-full max-w-md">
-        <header className="text-center mb-8">
-          <h1
-            id="auth-heading"
-            className="text-4xl font-extrabold text-blue-600 tracking-tight"
-          >
-            Digileave
-          </h1>
-          <p className="mt-1 text-gray-500 text-sm">Vacation Leave Management</p>
-        </header>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-white flex flex-col">
 
-        <div
-          id="auth-card"
-          role="main"
-          className="bg-white rounded-2xl shadow-lg p-8 space-y-6"
-        >
-          <div className="text-center space-y-1">
-            <h2 className="text-xl font-semibold text-gray-800">Sign in to your account</h2>
-            <p className="text-sm text-gray-500">
-              Use your company Google account to access your leave dashboard.
-            </p>
-          </div>
+      {/* Nav bar — logo only */}
+      <div className="px-6 lg:px-8 py-4 bg-white/70 backdrop-blur-sm border-b border-white/60">
+        <span className="text-xl font-extrabold tracking-tight text-blue-600 select-none">
+          Digileave
+        </span>
+      </div>
 
-          {error && (
-            <p role="alert" className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 text-center">
-              {error}
-            </p>
-          )}
+      {/* Hero — split screen */}
+      <div className="flex-1 flex items-center">
+        <div className="w-full max-w-7xl mx-auto px-6 lg:px-12 py-12">
+          <div className="grid sm:grid-cols-2 gap-8 sm:gap-12 items-center">
 
-          <div className="flex justify-center">
-            {loading ? (
-              <p className="text-sm text-gray-500">Signing you in…</p>
-            ) : (
-              <GoogleLogin
-                onSuccess={onSuccess}
-                onError={onError}
-                useOneTap
-                text="signin_with"
-                shape="rectangular"
-                logo_alignment="left"
-              />
-            )}
+            {/* Left — headline */}
+            <div className="space-y-5">
+              <h1 className="text-5xl font-extrabold tracking-tight leading-tight text-gray-900">
+                Empowering<br />
+                <span className="text-blue-600">your time off</span>
+              </h1>
+              <p className="text-lg text-gray-500 leading-relaxed max-w-md">
+                From requesting leave to team-wide visibility and instant approvals —
+                Digileave keeps everyone in sync without the email chains.
+              </p>
+            </div>
+
+            {/* Right — login card */}
+            <div id="auth-card" className="w-full max-w-md lg:max-w-full mx-auto
+              rounded-2xl overflow-hidden
+              bg-white/80 backdrop-blur-md
+              border border-gray-200/70
+              shadow-2xl shadow-gray-200/60
+              ring-1 ring-gray-900/5">
+
+              {/* Card header accent */}
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-5">
+                <p className="text-xs font-semibold uppercase tracking-widest text-blue-200 mb-1">
+                  Get started
+                </p>
+                <h2 className="text-xl font-bold text-white">Sign in to Digileave</h2>
+              </div>
+
+              {/* Card body */}
+              <div className="px-8 py-7 space-y-5">
+                <p className="text-sm text-gray-500">
+                  Use your company Google account to access your leave dashboard.
+                </p>
+
+                {error && (
+                  <p role="alert" className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                    {error}
+                  </p>
+                )}
+
+                {loading ? (
+                  <p className="text-sm text-gray-500">Signing you in…</p>
+                ) : (
+                  <GoogleLogin
+                    onSuccess={onSuccess}
+                    onError={onError}
+                    useOneTap
+                    text="signin_with"
+                    shape="rectangular"
+                    logo_alignment="left"
+                  />
+                )}
+
+                <p className="text-xs text-gray-400 pt-1">
+                  Secure sign-in · Company accounts only
+                </p>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
-    </section>
+
+      {/* Feature grid */}
+      <section aria-label="Features" className="max-w-7xl mx-auto w-full px-6 lg:px-12 pb-16">
+        <div className="grid sm:grid-cols-3 gap-5">
+          <FeatureCard
+            icon={
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+              </svg>
+            }
+            title="Real-time Balances"
+            description="See exactly how many days you have left, including pending requests and year-end carry-over — always up to date."
+          />
+          <FeatureCard
+            icon={
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5m-9-6h.008v.008H12v-.008zM12 15h.008v.008H12V15zm0 2.25h.008v.008H12v-.008zM9.75 15h.008v.008H9.75V15zm0 2.25h.008v.008H9.75v-.008zM7.5 15h.008v.008H7.5V15zm0 2.25h.008v.008H7.5v-.008zm6.75-4.5h.008v.008h-.008v-.008zm0 2.25h.008v.008h-.008V15zm0 2.25h.008v.008h-.008v-.008zm2.25-4.5h.008v.008H16.5v-.008zm0 2.25h.008v.008H16.5V15z" />
+              </svg>
+            }
+            title="Shared Team Calendar"
+            description="Spot who's off at a glance. Plan around your colleagues without a single back-and-forth email."
+          />
+          <FeatureCard
+            icon={
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+              </svg>
+            }
+            title="Automated Notifications"
+            description="Managers are notified the moment a request comes in. Employees hear back as soon as a decision is made."
+          />
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-100 py-5 px-6 text-center text-xs text-gray-400">
+        &copy; {new Date().getFullYear()} Digileave. All rights reserved.
+      </footer>
+    </div>
   )
 }
 
