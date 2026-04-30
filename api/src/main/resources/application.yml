@@ -9,10 +9,10 @@ spring:
     serialization:
       write-dates-as-timestamps: false
   mail:
-    host:     ${SMTP_HOST:smtp.gmail.com}
-    port:     ${SMTP_PORT:587}
-    username: ${SMTP_USERNAME:}
-    password: ${SMTP_PASSWORD:}
+    host:     ${SPRING_MAIL_HOST:smtp.gmail.com}
+    port:     ${SPRING_MAIL_PORT:587}
+    username: ${SPRING_MAIL_USERNAME:}
+    password: ${SPRING_MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
