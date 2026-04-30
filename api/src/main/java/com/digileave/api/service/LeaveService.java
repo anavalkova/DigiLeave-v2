@@ -713,12 +713,12 @@ public class LeaveService {
                                           String actorId) {
         String employeeEmail = employee.getEmail();
         if (employeeEmail == null || employeeEmail.isBlank()) return;
-        String replyTo  = userRepository.findById(actorId).map(User::getEmail).orElse(null);
-        boolean approved = decision == LeaveStatus.APPROVED;
-        String subject  = approved ? "Your leave request has been approved"
-                                   : "Your leave request has been rejected";
-        emailService.sendHtmlEmail(employeeEmail, subject,
-                buildDecisionBody(request, approved, rejectionReason), replyTo);
+        String replyTo = userRepository.findById(actorId).map(User::getEmail).orElse(null);
+        emailService.sendStatusNotification(
+                employeeEmail, employee.getName(),
+                request.getStartDate(), request.getEndDate(),
+                request.getTotalDays(), request.getType(),
+                decision, rejectionReason, replyTo);
     }
 
     private static String buildNewRequestBody(LeaveRequest r, User employee) {
@@ -732,25 +732,6 @@ public class LeaveService {
                "<li><b>Days:</b> " + r.getTotalDays() + "</li>" +
                "</ul>" +
                "<p>Please log in to review and approve or reject the request.</p>";
-    }
-
-    private static String buildDecisionBody(LeaveRequest r, boolean approved, String rejectionReason) {
-        String dates = r.getStartDate().equals(r.getEndDate())
-                ? r.getStartDate().format(DATE_FMT)
-                : r.getStartDate().format(DATE_FMT) + " – " + r.getEndDate().format(DATE_FMT);
-        StringBuilder sb = new StringBuilder();
-        sb.append("<p>Your leave request has been <b>")
-          .append(approved ? "approved" : "rejected")
-          .append("</b>:</p>")
-          .append("<ul>")
-          .append("<li><b>Type:</b> ").append(r.getType()).append("</li>")
-          .append("<li><b>Dates:</b> ").append(dates).append("</li>")
-          .append("<li><b>Days:</b> ").append(r.getTotalDays()).append("</li>")
-          .append("</ul>");
-        if (!approved && rejectionReason != null && !rejectionReason.isBlank()) {
-            sb.append("<p><b>Reason:</b> ").append(rejectionReason).append("</p>");
-        }
-        return sb.toString();
     }
 
     private static String currentActorId() {

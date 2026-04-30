@@ -6,7 +6,9 @@ import AdminPanel from './AdminPanel'
 import ApproverView from './ApproverView'
 import ApproverUsersView from './ApproverUsersView'
 import AuditLog from './AuditLog'
-import LeaveCalendar, { isoOf, HOLIDAYS } from './LeaveCalendar'
+import LeaveCalendar, { isoOf } from './LeaveCalendar'
+import { fmtDate, fmtDays, initials, countWorkdays } from './utils/dateUtils'
+import { halfDaySlotLabel, remainingDaysColor } from './utils/formatters'
 import StatusBadge from './StatusBadge'
 import TeamCalendar from './TeamCalendar'
 import BaseTable from './BaseTable'
@@ -52,58 +54,8 @@ const HIST_INITIAL = {
 
 // Holiday set kept in LeaveCalendar.jsx (single source of truth for frontend).
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Format an ISO date string (YYYY-MM-DD) as "3 Feb 2026" without timezone drift. */
-function fmtDate(iso) {
-  const [y, m, d] = iso.split('-').map(Number)
-  return new Date(y, m - 1, d).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
-}
-
-/** Return initials from a full name, e.g. "Jane Doe" → "JD". */
-function initials(name = '') {
-  return name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((n) => n[0].toUpperCase())
-    .join('')
-}
-
-/**
- * Count working days between two ISO date strings (inclusive),
- * excluding weekends and Bulgarian public holidays.
- * When halfDayOnEnd is true the last date contributes 0.5 instead of 1.
- * Returns null if either date is missing or end < start.
- */
-function countWorkdays(start, end, halfDayOnEnd = false) {
-  if (!start || !end || end < start) return null
-  let count = 0
-  const cur  = new Date(start + 'T00:00:00')
-  const last = new Date(end   + 'T00:00:00')
-  while (cur <= last) {
-    const dow = cur.getDay() // 0=Sun, 6=Sat
-    const iso = isoOf(cur)
-    if (dow !== 0 && dow !== 6 && !HOLIDAYS[iso]) {
-      const isLastDay = iso === end
-      count += (halfDayOnEnd && isLastDay) ? 0.5 : 1
-    }
-    cur.setDate(cur.getDate() + 1)
-  }
-  return count
-}
-
 // ─── Sub-components ──────────────────────────────────────────────────────────
 // StatusBadge is imported from StatusBadge.jsx (shared with ApproverView)
-
-/** Format a number: whole numbers show without decimals, halves show one decimal place. */
-function fmtDays(n) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(1)
-}
 
 /**
  * Compact balance summary strip replacing the old 5-card grid.
@@ -200,11 +152,7 @@ function BalanceSummary({ summary }) {
         <div className="col-span-2 sm:col-span-1 px-5 py-4 bg-gray-50 sm:bg-white">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Remaining</p>
           <div className="mt-1 flex items-baseline gap-1.5 flex-wrap">
-            <span className={`text-2xl font-bold ${
-              overBudget           ? 'text-red-500'   :
-              displayAvail <= 2    ? 'text-amber-500' :
-                                     'text-emerald-600'
-            }`}>
+            <span className={`text-2xl font-bold ${remainingDaysColor(displayAvail, overBudget)}`}>
               {overBudget ? `−${fmtDays(committed - totalBudget)}` : fmtDays(displayAvail)}
             </span>
             <span className="text-xs text-gray-400">days</span>
@@ -1118,7 +1066,7 @@ function App() {
                               className="h-3.5 w-3.5 border-gray-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
                             />
                             <span className="text-sm text-gray-700">
-                              {slot === 'MORNING' ? '☀ Morning' : '🌙 Afternoon'}
+                              {slot === 'MORNING' ? '☀' : '🌙'} {halfDaySlotLabel(slot)}
                             </span>
                           </label>
                         ))}

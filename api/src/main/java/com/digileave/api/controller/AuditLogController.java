@@ -1,5 +1,7 @@
 package com.digileave.api.controller;
 
+import com.digileave.api.dto.AuditLogResponseDto;
+import com.digileave.api.mapper.DtoMapper;
 import com.digileave.api.model.AuditLog;
 import com.digileave.api.repository.AuditLogRepository;
 import org.springframework.data.domain.Sort;
@@ -20,13 +22,15 @@ import java.util.List;
 public class AuditLogController {
 
     private final AuditLogRepository repository;
+    private final DtoMapper          mapper;
 
-    public AuditLogController(AuditLogRepository repository) {
+    public AuditLogController(AuditLogRepository repository, DtoMapper mapper) {
         this.repository = repository;
+        this.mapper     = mapper;
     }
 
     @GetMapping
-    public ResponseEntity<List<AuditLog>> getAuditLogs(
+    public ResponseEntity<List<AuditLogResponseDto>> getAuditLogs(
             @RequestParam(required = false) String actorId,
             @RequestParam(required = false) String targetUserId,
             @RequestParam(required = false) String actionType,
@@ -61,6 +65,6 @@ public class AuditLogController {
             logs = logs.stream().filter(l -> l.getTimestamp().isBefore(to)).toList();
         }
 
-        return ResponseEntity.ok(logs);
+        return ResponseEntity.ok(logs.stream().map(mapper::toAuditLogResponse).toList());
     }
 }

@@ -4,6 +4,7 @@ import BaseTable from './BaseTable'
 import { PAGE_SIZE, sortRequests } from './Pagination'
 import { useColumnFilters } from './ColumnFilters'
 import { LEAVE_TYPE_OPTIONS, formatLeaveType, LEAVE_STATUS } from './constants'
+import { fmtDate } from './utils/dateUtils'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -82,15 +83,6 @@ function RejectModal({ req, onConfirm, onCancel }) {
       </div>
     </div>
   )
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function fmtDate(iso) {
-  const [y, m, d] = iso.split('-').map(Number)
-  return new Date(y, m - 1, d).toLocaleDateString('en-GB', {
-    day: 'numeric', month: 'short', year: 'numeric',
-  })
 }
 
 // ── Column definitions ────────────────────────────────────────────────────────

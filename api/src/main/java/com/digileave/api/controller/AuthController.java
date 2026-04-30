@@ -2,7 +2,7 @@ package com.digileave.api.controller;
 
 import com.digileave.api.dto.AuthResponse;
 import com.digileave.api.dto.LoginRequest;
-import com.digileave.api.dto.UserResponseDto;
+import com.digileave.api.mapper.DtoMapper;
 import com.digileave.api.model.RefreshToken;
 import com.digileave.api.model.User;
 import com.digileave.api.repository.RefreshTokenRepository;
@@ -46,13 +46,16 @@ public class AuthController {
     private final AuthService            authService;
     private final JwtService             jwtService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final DtoMapper              mapper;
 
     public AuthController(AuthService authService,
                           JwtService jwtService,
-                          RefreshTokenRepository refreshTokenRepository) {
+                          RefreshTokenRepository refreshTokenRepository,
+                          DtoMapper mapper) {
         this.authService            = authService;
         this.jwtService             = jwtService;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.mapper                 = mapper;
     }
 
     @PostMapping("/google")
@@ -63,7 +66,7 @@ public class AuthController {
             User user = authService.verifyAndUpsertUser(request.getIdToken());
             String accessToken = jwtService.generateAccessToken(user.getId());
             issueRefreshCookie(user.getId(), response);
-            return ResponseEntity.ok(new AuthResponse(accessToken, UserResponseDto.from(user)));
+            return ResponseEntity.ok(new AuthResponse(accessToken, mapper.toUserResponse(user)));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         } catch (Exception e) {

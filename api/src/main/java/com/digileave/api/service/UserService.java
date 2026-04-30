@@ -1,6 +1,7 @@
 package com.digileave.api.service;
 
 import com.digileave.api.dto.UserResponseDto;
+import com.digileave.api.mapper.DtoMapper;
 import com.digileave.api.model.AnnualLeaveBalance;
 import com.digileave.api.model.LeaveStatus;
 import com.digileave.api.model.Role;
@@ -23,13 +24,16 @@ public class UserService {
     private final UserRepository         userRepository;
     private final LeaveRequestRepository leaveRequestRepository;
     private final AuditLogService        auditLogService;
+    private final DtoMapper              mapper;
 
     public UserService(UserRepository userRepository,
                        LeaveRequestRepository leaveRequestRepository,
-                       AuditLogService auditLogService) {
+                       AuditLogService auditLogService,
+                       DtoMapper mapper) {
         this.userRepository         = userRepository;
         this.leaveRequestRepository = leaveRequestRepository;
         this.auditLogService        = auditLogService;
+        this.mapper                 = mapper;
     }
 
     /**
@@ -70,7 +74,7 @@ public class UserService {
             } catch (IllegalArgumentException ignored) {}
         }
 
-        return users.stream().map(UserResponseDto::from).collect(Collectors.toList());
+        return users.stream().map(mapper::toUserResponse).collect(Collectors.toList());
     }
 
     /**
@@ -81,7 +85,7 @@ public class UserService {
      * @throws IllegalArgumentException if no user exists with the given ID
      */
     public UserResponseDto getUser(String userId) {
-        return UserResponseDto.from(
+        return mapper.toUserResponse(
                 userRepository.findById(userId)
                         .orElseThrow(() -> new IllegalArgumentException("User not found.")));
     }
@@ -98,7 +102,7 @@ public class UserService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
         user.setRole(role);
-        return UserResponseDto.from(userRepository.save(user));
+        return mapper.toUserResponse(userRepository.save(user));
     }
 
     /**
@@ -119,7 +123,7 @@ public class UserService {
                 : new ArrayList<>(approverEmails);
         sanitised.remove(user.getEmail());
         user.setApproverEmails(sanitised);
-        return UserResponseDto.from(userRepository.save(user));
+        return mapper.toUserResponse(userRepository.save(user));
     }
 
     /**
@@ -162,7 +166,7 @@ public class UserService {
         String actorId = currentActorId();
         auditLogService.log(actorId, userId, "BALANCE_ADJUSTED", before, bal);
 
-        return UserResponseDto.from(saved);
+        return mapper.toUserResponse(saved);
     }
 
     /**
@@ -177,7 +181,7 @@ public class UserService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
         user.setTeam(team);
-        return UserResponseDto.from(userRepository.save(user));
+        return mapper.toUserResponse(userRepository.save(user));
     }
 
     /**
@@ -199,7 +203,7 @@ public class UserService {
 
         if (requester.getRole() == Role.ADMIN) {
             return userRepository.findAll().stream()
-                    .map(UserResponseDto::from).collect(Collectors.toList());
+                    .map(mapper::toUserResponse).collect(Collectors.toList());
         }
 
         if (requester.getRole() == Role.APPROVER) {
@@ -207,7 +211,7 @@ public class UserService {
             return userRepository.findAll().stream()
                     .filter(u -> u.getApproverEmails() != null
                               && u.getApproverEmails().contains(email))
-                    .map(UserResponseDto::from)
+                    .map(mapper::toUserResponse)
                     .collect(Collectors.toList());
         }
 

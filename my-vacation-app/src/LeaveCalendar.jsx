@@ -1,4 +1,7 @@
 import { useState, useMemo } from 'react'
+import { isoOf, HOLIDAYS } from './utils/dateUtils'
+
+export { isoOf, HOLIDAYS }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -8,30 +11,7 @@ const MONTH_NAMES = [
 ]
 const DAY_LABELS = ['Mo','Tu','We','Th','Fr','Sa','Su']
 
-// Mirrors BulgarianPublicHolidays.java — includes Sunday→Monday displacement fixes
-export const HOLIDAYS = {
-  '2026-01-01': "New Year's Day",
-  '2026-03-03': 'Liberation Day',
-  '2026-04-10': 'Good Friday',
-  '2026-04-11': 'Holy Saturday',
-  '2026-04-12': 'Easter Sunday',
-  '2026-04-13': 'Easter Monday',
-  '2026-05-01': 'Labour Day',
-  '2026-05-06': "St. George's Day",
-  '2026-05-25': 'Education & Culture Day',
-  '2026-09-07': 'Unification Day',
-  '2026-09-22': 'Independence Day',
-  '2026-11-02': "National Enlighteners' Day",
-  '2026-12-24': 'Christmas Eve',
-  '2026-12-25': 'Christmas Day',
-  '2026-12-28': 'Second Christmas Day',
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-export function isoOf(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
 
 function sameDay(a, b) {
   return a && b && isoOf(a) === isoOf(b)
