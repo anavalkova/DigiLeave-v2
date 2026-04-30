@@ -13,7 +13,6 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.context.TestPropertySource;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -35,17 +34,9 @@ import static org.mockito.Mockito.when;
  * Integration test: verifies that LeaveService calls EmailService correctly
  * through Spring's DI container. EmailService is @MockBean so no SMTP connection
  * is made; all repositories are also @MockBean so no MongoDB connection is needed.
+ * Required properties are supplied by src/test/resources/application-test.properties.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
-@TestPropertySource(properties = {
-    "spring.data.mongodb.uri=mongodb://localhost:27017/digileave-test",
-    "spring.mail.host=smtp.example.com",
-    "spring.mail.username=test@example.com",
-    "spring.mail.password=test-password",
-    "jwt.secret=test-secret-value-minimum-32-characters!!",
-    "google.client-id=test-google-client-id",
-    "cors.allowed-origins=http://localhost:5173"
-})
 class LeaveServiceEmailIntegrationTest {
 
     @MockBean private LeaveRequestRepository leaveRequestRepository;
@@ -116,7 +107,8 @@ class LeaveServiceEmailIntegrationTest {
                     eq(TYPE),
                     eq(LeaveStatus.APPROVED),
                     isNull(),         // no rejection reason for approvals
-                    any()             // replyTo — resolved from actorId at runtime
+                    any(),            // replyTo — resolved from actorId at runtime
+                    eq(REQUEST_ID)
             );
         }
 
@@ -134,7 +126,8 @@ class LeaveServiceEmailIntegrationTest {
                     anyString(),
                     eq(LeaveStatus.REJECTED),
                     eq(reason),
-                    any()
+                    any(),
+                    eq(REQUEST_ID)
             );
         }
     }
@@ -152,7 +145,7 @@ class LeaveServiceEmailIntegrationTest {
 
             verify(emailService).sendStatusNotification(
                     toCaptor.capture(), any(), any(), any(),
-                    anyDouble(), any(), any(), any(), any());
+                    anyDouble(), any(), any(), any(), any(), any());
 
             assertThat(toCaptor.getValue()).isEqualTo(USER_EMAIL);
         }
@@ -170,7 +163,7 @@ class LeaveServiceEmailIntegrationTest {
                     any(), any(),
                     startCaptor.capture(), endCaptor.capture(),
                     daysCaptor.capture(), any(),
-                    statusCaptor.capture(), any(), any());
+                    statusCaptor.capture(), any(), any(), any());
 
             assertThat(startCaptor.getValue()).isEqualTo(START);
             assertThat(endCaptor.getValue()).isEqualTo(END);
@@ -188,7 +181,7 @@ class LeaveServiceEmailIntegrationTest {
             verify(emailService).sendStatusNotification(
                     any(), any(), any(), any(),
                     anyDouble(), any(), any(),
-                    reasonCaptor.capture(), any());
+                    reasonCaptor.capture(), any(), any());
 
             // XssUtils.sanitize() is applied but plain text passes through unchanged
             assertThat(reasonCaptor.getValue()).isEqualTo(reason);

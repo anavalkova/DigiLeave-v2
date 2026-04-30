@@ -718,7 +718,7 @@ public class LeaveService {
                 employeeEmail, employee.getName(),
                 request.getStartDate(), request.getEndDate(),
                 request.getTotalDays(), request.getType(),
-                decision, rejectionReason, replyTo);
+                decision, rejectionReason, replyTo, request.getId());
     }
 
     private static String buildNewRequestBody(LeaveRequest r, User employee) {

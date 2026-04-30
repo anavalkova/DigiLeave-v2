@@ -28,12 +28,13 @@ class EmailServiceTest {
     @Mock  private JavaMailSender mailSender;
     @InjectMocks private EmailService emailService;
 
-    private static final String     TO    = "employee@example.com";
-    private static final String     NAME  = "Jane Smith";
-    private static final LocalDate  START = LocalDate.of(2026, 6, 1);
-    private static final LocalDate  END   = LocalDate.of(2026, 6, 3);
-    private static final double     DAYS  = 3.0;
-    private static final String     TYPE  = "Annual Leave";
+    private static final String    TO     = "employee@example.com";
+    private static final String    NAME   = "Jane Smith";
+    private static final LocalDate START  = LocalDate.of(2026, 6, 1);
+    private static final LocalDate END    = LocalDate.of(2026, 6, 3);
+    private static final double    DAYS   = 3.0;
+    private static final String    TYPE   = "Annual Leave";
+    private static final String    REQ_ID = "req-abc123";
 
     private MimeMessage mimeMessage;
 
@@ -41,7 +42,7 @@ class EmailServiceTest {
     void setUp() {
         ReflectionTestUtils.setField(emailService, "senderAddress", "noreply@digileave.com");
         mimeMessage = new MimeMessage(Session.getDefaultInstance(new Properties()));
-        // lenient: the blankSenderAddress test returns early before createMimeMessage() is reached
+        // lenient: early-exit tests return before createMimeMessage() is reached
         lenient().when(mailSender.createMimeMessage()).thenReturn(mimeMessage);
     }
 
@@ -53,16 +54,29 @@ class EmailServiceTest {
         @Test
         void setsCorrectRecipient() throws Exception {
             emailService.sendStatusNotification(
-                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null);
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null, REQ_ID);
 
             assertThat(mimeMessage.getAllRecipients()).hasSize(1);
             assertThat(mimeMessage.getAllRecipients()[0].toString()).isEqualTo(TO);
         }
 
         @Test
+        void subjectContainsStatusTypeStartDateAndId() throws Exception {
+            emailService.sendStatusNotification(
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null, REQ_ID);
+
+            String subject = mimeMessage.getSubject();
+            assertThat(subject).startsWith("[Digileave]");
+            assertThat(subject).containsIgnoringCase("approved");
+            assertThat(subject).contains(TYPE);
+            assertThat(subject).contains("1 Jun 2026");
+            assertThat(subject).contains(REQ_ID);
+        }
+
+        @Test
         void htmlBodyContainsApprovedBadge() throws Exception {
             emailService.sendStatusNotification(
-                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null);
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null, REQ_ID);
 
             assertThat(mimeMessage.getContent().toString()).containsIgnoringCase("approved");
         }
@@ -70,7 +84,7 @@ class EmailServiceTest {
         @Test
         void htmlBodyContainsEmployeeName() throws Exception {
             emailService.sendStatusNotification(
-                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null);
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null, REQ_ID);
 
             assertThat(mimeMessage.getContent().toString()).contains(NAME);
         }
@@ -78,7 +92,7 @@ class EmailServiceTest {
         @Test
         void invokesMailSenderSend() {
             emailService.sendStatusNotification(
-                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null);
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null, REQ_ID);
 
             verify(mailSender).send(any(MimeMessage.class));
         }
@@ -90,9 +104,17 @@ class EmailServiceTest {
     class Rejected {
 
         @Test
+        void subjectContainsRejected() throws Exception {
+            emailService.sendStatusNotification(
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, null, null, REQ_ID);
+
+            assertThat(mimeMessage.getSubject()).containsIgnoringCase("rejected");
+        }
+
+        @Test
         void htmlBodyContainsRejectedBadge() throws Exception {
             emailService.sendStatusNotification(
-                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, null, null);
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, null, null, REQ_ID);
 
             assertThat(mimeMessage.getContent().toString()).containsIgnoringCase("rejected");
         }
@@ -102,7 +124,7 @@ class EmailServiceTest {
             String reason = "Insufficient team coverage during the holiday period";
 
             emailService.sendStatusNotification(
-                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, reason, null);
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, reason, null, REQ_ID);
 
             assertThat(mimeMessage.getContent().toString()).contains(reason);
         }
@@ -110,16 +132,15 @@ class EmailServiceTest {
         @Test
         void htmlBodyOmitsReasonBlock_whenReasonIsNull() throws Exception {
             emailService.sendStatusNotification(
-                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, null, null);
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, null, null, REQ_ID);
 
-            // "Reason" label is only rendered when a reason string is present
             assertThat(mimeMessage.getContent().toString()).doesNotContain("Reason");
         }
 
         @Test
         void htmlBodyOmitsReasonBlock_whenReasonIsBlank() throws Exception {
             emailService.sendStatusNotification(
-                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, "   ", null);
+                    TO, NAME, START, END, DAYS, TYPE, LeaveStatus.REJECTED, "   ", null, REQ_ID);
 
             assertThat(mimeMessage.getContent().toString()).doesNotContain("Reason");
         }
@@ -137,7 +158,7 @@ class EmailServiceTest {
 
             assertThatNoException().isThrownBy(() ->
                     emailService.sendStatusNotification(
-                            TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null));
+                            TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null, REQ_ID));
         }
 
         @Test
@@ -146,7 +167,7 @@ class EmailServiceTest {
 
             assertThatNoException().isThrownBy(() ->
                     emailService.sendStatusNotification(
-                            TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null));
+                            TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null, REQ_ID));
 
             verify(mailSender, never()).send(any(MimeMessage.class));
         }
@@ -157,7 +178,7 @@ class EmailServiceTest {
 
             assertThatNoException().isThrownBy(() ->
                     emailService.sendStatusNotification(
-                            TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null));
+                            TO, NAME, START, END, DAYS, TYPE, LeaveStatus.APPROVED, null, null, REQ_ID));
 
             verify(mailSender, never()).send(any(MimeMessage.class));
         }

@@ -36,17 +36,19 @@ public class EmailService {
                                        LocalDate startDate, LocalDate endDate,
                                        double totalDays, String leaveType,
                                        LeaveStatus status, String rejectionReason,
-                                       String replyTo) {
+                                       String replyTo, String requestId) {
         if (senderAddress == null || senderAddress.isBlank()) {
             log.warn("SMTP not configured (SPRING_MAIL_USERNAME is unset) — skipping notification to {}", to);
             return;
         }
 
-        String subject = switch (status) {
-            case APPROVED -> "Your leave request has been approved";
-            case REJECTED -> "Your leave request has been rejected";
-            default       -> "Your leave request status has been updated";
+        String statusLabel = switch (status) {
+            case APPROVED -> "Approved";
+            case REJECTED -> "Rejected";
+            default       -> "Updated";
         };
+        String subject = String.format("[Digileave] %s: %s (%s) - ID: %s",
+                statusLabel, leaveType, startDate.format(DATE_FMT), requestId);
 
         String htmlBody = buildStatusBody(employeeName, startDate, endDate,
                                           totalDays, leaveType, status, rejectionReason);
