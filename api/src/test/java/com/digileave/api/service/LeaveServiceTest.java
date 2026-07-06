@@ -45,13 +45,14 @@ class LeaveServiceTest {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private User makeUser(int entitled, int transferred) {
+    /** {@code startingBalance} drives available days — {@code entitled} is informational only and is left at 0. */
+    private User makeUser(int startingBalance, int transferred) {
         User user = new User();
         user.setId(USER_ID);
         user.setName("Test User");
         user.setEmail("test@example.com");
         AnnualLeaveBalance bal = new AnnualLeaveBalance();
-        bal.setEntitled(entitled);
+        bal.setStartingBalanceAdjustment(startingBalance);
         bal.setTransferred(transferred);
         user.setAnnualLeave(bal);
         return user;
@@ -111,7 +112,7 @@ class LeaveServiceTest {
 
         @Test
         void annualLeave_approvedAndPendingDaysCountAgainstBalance() {
-            // entitled=5, 2 approved + 2 pending = 4 consumed → 1 available; requesting 1 → passes
+            // startingBalance=5, 2 approved + 2 pending = 4 consumed → 1 available; requesting 1 → passes
             User user = makeUser(5, 0);
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
             when(leaveRequestRepository.findByUserIdAndStatus(USER_ID, LeaveStatus.APPROVED))
@@ -130,7 +131,7 @@ class LeaveServiceTest {
 
         @Test
         void annualLeave_transferredDaysIncludedInTotalGranted() {
-            // 0 entitled + 3 transferred = 3 available; requesting 3 workdays → passes
+            // 0 starting balance + 3 transferred = 3 available; requesting 3 workdays → passes
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(makeUser(0, 3)));
 
             LeaveRequest saved = leaveService.createRequest(dto(MON, WED, "annual", HalfDaySlot.NONE));
@@ -139,7 +140,7 @@ class LeaveServiceTest {
         }
 
         @Test
-        void sickLeave_doesNotCheckBalance_zeroEntitledAllowed() {
+        void sickLeave_doesNotCheckBalance_zeroBalanceAllowed() {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(makeUser(0, 0)));
 
             assertThatNoException().isThrownBy(() ->
@@ -147,7 +148,7 @@ class LeaveServiceTest {
         }
 
         @Test
-        void homeOffice_doesNotCheckBalance_zeroEntitledAllowed() {
+        void homeOffice_doesNotCheckBalance_zeroBalanceAllowed() {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(makeUser(0, 0)));
 
             assertThatNoException().isThrownBy(() ->
@@ -215,7 +216,7 @@ class LeaveServiceTest {
 
         @Test
         void exceedsAvailableBalance_throwsValidationException() {
-            // entitled=2, requesting 3 days (Mon–Wed)
+            // startingBalance=2, requesting 3 days (Mon–Wed)
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(makeUser(2, 0)));
 
             assertThatThrownBy(() -> leaveService.createRequest(dto(MON, WED, "annual", HalfDaySlot.NONE)))
@@ -225,7 +226,7 @@ class LeaveServiceTest {
 
         @Test
         void pendingDaysReduceAvailableBalance_requestPushesOverLimit_throwsValidationException() {
-            // entitled=5, pending=4 → only 1 available; requesting 2 days (Mon–Tue) → fails
+            // startingBalance=5, pending=4 → only 1 available; requesting 2 days (Mon–Tue) → fails
             User user = makeUser(5, 0);
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
             when(leaveRequestRepository.findByUserIdAndStatus(USER_ID, LeaveStatus.PENDING))

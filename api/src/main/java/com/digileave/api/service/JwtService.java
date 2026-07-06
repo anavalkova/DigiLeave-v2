@@ -23,9 +23,10 @@ public class JwtService {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateAccessToken(String userId) {
+    public String generateAccessToken(String userId, String role) {
         return Jwts.builder()
                 .subject(userId)
+                .claim("role", role)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + accessTokenExpiryMs))
                 .signWith(signingKey())
@@ -39,6 +40,15 @@ public class JwtService {
                 .parseSignedClaims(token)
                 .getPayload()
                 .getSubject();
+    }
+
+    public String extractRole(String token) {
+        return Jwts.parser()
+                .verifyWith(signingKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .get("role", String.class);
     }
 
     public boolean isValid(String token) {

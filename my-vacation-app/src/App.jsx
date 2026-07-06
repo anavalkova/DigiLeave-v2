@@ -60,25 +60,29 @@ const HIST_INITIAL = {
 /**
  * Compact balance summary strip replacing the old 5-card grid.
  *
- * Available = (Entitled + CarriedOver + Adj) − (Used + Pending)
+ * Quota      = the starting balance (configured per user, e.g. from an HR
+ *              export's "days left today") — the actual pool leave is
+ *              deducted from. This year's entitled days are shown only as
+ *              a reference note; they don't feed into the math.
+ * Remaining  = (StartingBalance + CarriedOver) − (Used + Pending).
  *
  * The backend's summary.available only subtracts Used, not Pending.
  * We recompute displayAvailable here so we never double-count.
  *
  * Progress bar: the grey track is split into two zones —
- *   • light grey  = entitled days (this year's allocation)
+ *   • light grey  = starting-balance days
  *   • cyan-100    = transferred / carried-over days (answers the "different shade" question)
  * The foreground segments (emerald = used, amber = pending) overlay the track;
  * whatever is uncovered shows which pool of days is still available.
  */
 function BalanceSummary({ summary }) {
-  const entitled    = summary?.entitled                    ?? 0
-  const transferred = summary?.transferred                 ?? 0
-  const adj         = summary?.startingBalanceAdjustment   ?? 0
-  const used        = summary?.used                        ?? 0
-  const pending     = summary?.pending                     ?? 0
+  const entitled        = summary?.entitled                  ?? 0
+  const transferred     = summary?.transferred                ?? 0
+  const startingBalance = summary?.startingBalanceAdjustment  ?? 0
+  const used            = summary?.used                       ?? 0
+  const pending          = summary?.pending                    ?? 0
 
-  const totalBudget       = entitled + transferred + adj
+  const totalBudget       = transferred + startingBalance
   const committed         = used + pending
   const displayAvail      = totalBudget - committed   // correct: subtracts both used + pending
   const overBudget        = committed > totalBudget
@@ -87,8 +91,8 @@ function BalanceSummary({ summary }) {
   // Bar segment widths as percentages of totalBudget
   const usedPct        = totalBudget > 0 ? Math.min(100, used    / totalBudget * 100) : 0
   const pendingPct     = totalBudget > 0 ? Math.min(100 - usedPct, pending / totalBudget * 100) : 0
-  // Boundary between entitled and transferred zones (for track colouring)
-  const entitledZonePct = totalBudget > 0 ? (entitled + adj) / totalBudget * 100 : 100
+  // Boundary between starting-balance and carried-over zones (for track colouring)
+  const startingBalanceZonePct = totalBudget > 0 ? startingBalance / totalBudget * 100 : 100
 
   return (
     <div
@@ -103,29 +107,18 @@ function BalanceSummary({ summary }) {
         <div className="px-5 py-4">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Quota</p>
           <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-2xl font-bold text-gray-800">{fmtDays(totalBudget)}</span>
+            <span className="text-2xl font-bold text-gray-800">{fmtDays(startingBalance)}</span>
             <span className="text-xs text-gray-400">days</span>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-snug">
-            <span className="font-semibold text-blue-600">{fmtDays(entitled)}</span>
-            <span className="text-gray-400">entitled</span>
-            {transferred > 0 && (
-              <>
-                <span className="text-gray-300">·</span>
-                <span className="font-semibold text-cyan-600">+{fmtDays(transferred)}</span>
-                <span className="text-gray-400">carried over</span>
-              </>
-            )}
-            {adj !== 0 && (
-              <>
-                <span className="text-gray-300">·</span>
-                <span className={`font-semibold ${adj > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {adj > 0 ? '+' : ''}{fmtDays(adj)}
-                </span>
-                <span className="text-gray-400">adj.</span>
-              </>
-            )}
-          </div>
+          {transferred > 0 && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-snug">
+              <span className="font-semibold text-cyan-600">+{fmtDays(transferred)}</span>
+              <span className="text-gray-400">carried over</span>
+            </div>
+          )}
+          {entitled > 0 && (
+            <p className="mt-1 text-xs text-gray-400">{fmtDays(entitled)} entitled for this year</p>
+          )}
         </div>
 
         {/* ── Booked ── */}
@@ -160,11 +153,6 @@ function BalanceSummary({ summary }) {
               <span className="text-[10px] font-semibold text-red-400 uppercase tracking-wide">over budget</span>
             )}
           </div>
-          {adj !== 0 && (
-            <p className="mt-1 text-xs text-gray-400">
-              incl. {adj > 0 ? '+' : ''}{fmtDays(adj)} day adj.
-            </p>
-          )}
           {halfDayRemaining && (
             <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600 ring-1 ring-inset ring-blue-500/20">
               ½ 1 half-day available
@@ -176,7 +164,7 @@ function BalanceSummary({ summary }) {
       {/* ── Progress bar ─────────────────────────────────────────── */}
       {totalBudget > 0 && (
         <div className="px-5 pb-4 pt-3 border-t border-gray-100">
-          {/* Track — two-zone background shows entitled (grey) vs carried-over (cyan) */}
+          {/* Track — two-zone background shows starting balance (grey) vs carried-over (cyan) */}
           <div
             role="img"
             aria-label={`${fmtDays(used)} days used, ${fmtDays(pending)} pending, ${fmtDays(Math.max(0, displayAvail))} remaining`}
@@ -186,7 +174,7 @@ function BalanceSummary({ summary }) {
             {transferred > 0 && (
               <div
                 className="absolute inset-y-0 bg-cyan-100"
-                style={{ left: `${entitledZonePct}%`, width: `${transferred / totalBudget * 100}%` }}
+                style={{ left: `${startingBalanceZonePct}%`, width: `${transferred / totalBudget * 100}%` }}
               />
             )}
             {/* Used — emerald, from left */}
@@ -765,7 +753,7 @@ function App() {
   // ── Side effects for data loading ─────────────────────────────────────────
 
   useEffect(() => {
-    if (user?.role === ROLES.ADMIN) fetchAllUsers()
+    if (user?.role === ROLES.ADMIN || user?.role === ROLES.ACCOUNTANT) fetchAllUsers()
   }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -852,7 +840,7 @@ function App() {
   // Available for NEW requests = total budget − used − pending − this preview request
   // summary.available only subtracts used; subtract pending separately to avoid double-count.
   const formAvailable    = summary != null
-    ? (summary.entitled ?? 0) + (summary.transferred ?? 0) + (summary.startingBalanceAdjustment ?? 0)
+    ? (summary.transferred ?? 0) + (summary.startingBalanceAdjustment ?? 0)
       - (summary.used ?? 0) - (summary.pending ?? 0)
     : 0
   // Only annual leave affects the balance — never show balance impact for other types
@@ -931,14 +919,15 @@ function App() {
     )
   }
 
-  const canApprove = user.role === ROLES.ADMIN || user.role === ROLES.APPROVER
+  const canApprove  = user.role === ROLES.ADMIN || user.role === ROLES.APPROVER
+  const canSeeUsers = canApprove || user.role === ROLES.ACCOUNTANT
 
   const navItems = [
     { id: 'team',      label: 'Team Calendar',  icon: IconTeamCalendar },
     { id: 'request',   label: 'Request Leave',   icon: IconRequestLeave },
     { id: 'history',   label: 'My Requests',     icon: IconMyRequests   },
-    ...(canApprove ? [{ id: 'approvals', label: 'Approvals', icon: IconApprovals, badge: pendingCount }] : []),
-    ...(canApprove ? [{ id: 'users',     label: 'Users',     icon: IconUsers }] : []),
+    ...(canApprove   ? [{ id: 'approvals', label: 'Approvals', icon: IconApprovals, badge: pendingCount }] : []),
+    ...(canSeeUsers  ? [{ id: 'users',     label: 'Users',     icon: IconUsers }] : []),
     ...(user.role === ROLES.ADMIN ? [{ id: 'logs', label: 'System Logs', icon: IconLogs }] : []),
   ]
 
@@ -1296,30 +1285,24 @@ function App() {
             </div>
           )}
 
-          {/* ── Users tab (ADMIN = full edit; APPROVER = read-only) ────── */}
-          {activeTab === 'users' && canApprove && (
+          {/* ── Users tab (ADMIN = full edit; APPROVER/ACCOUNTANT = read-only) ── */}
+          {activeTab === 'users' && canSeeUsers && (
             <div
               id="tabpanel-users"
               role="tabpanel"
               aria-labelledby="tab-users"
               className="p-6"
             >
-              {user.role === ROLES.ADMIN ? (
-                <AdminPanel
-                  allUsers={allUsers}
-                  usersLoading={usersLoading}
-                  onSaveRole={handleRoleUpdate}
-                  onSaveBalance={handleBalanceUpdate}
-                  onSaveApprovers={handleApproverSave}
-                  onSaveTeam={handleTeamUpdate}
-                  onRefreshUsers={fetchAllUsers}
-                />
-              ) : (
-                <ApproverUsersView
-                  users={managedUsers}
-                  loading={managedUsersLoading}
-                />
-              )}
+              <AdminPanel
+                allUsers={user.role === ROLES.APPROVER ? managedUsers : allUsers}
+                usersLoading={user.role === ROLES.APPROVER ? managedUsersLoading : usersLoading}
+                isAdmin={user.role === ROLES.ADMIN}
+                onSaveRole={handleRoleUpdate}
+                onSaveBalance={handleBalanceUpdate}
+                onSaveApprovers={handleApproverSave}
+                onSaveTeam={handleTeamUpdate}
+                onRefreshUsers={user.role === ROLES.APPROVER ? fetchManagedUsers : fetchAllUsers}
+              />
             </div>
           )}
 

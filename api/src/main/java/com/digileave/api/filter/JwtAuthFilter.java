@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -40,15 +41,20 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String token = authHeader.substring(7);
         String userId;
+        String role;
         try {
             userId = jwtService.extractUserId(token);
+            role   = jwtService.extractRole(token);
         } catch (JwtException | IllegalArgumentException e) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":\"Token expired or invalid\"}");
             return;
         }
-        var auth = new UsernamePasswordAuthenticationToken(userId, null, List.of());
+
+        String authority = (role != null && !role.isBlank()) ? "ROLE_" + role : "ROLE_USER";
+        var auth = new UsernamePasswordAuthenticationToken(
+                userId, null, List.of(new SimpleGrantedAuthority(authority)));
         SecurityContextHolder.getContext().setAuthentication(auth);
         chain.doFilter(request, response);
     }

@@ -22,9 +22,10 @@ import java.util.List;
  *
  * Algorithm:
  *   1. Compute each user's remaining annual-leave balance
- *      (entitled + transferred + startingBalanceAdjustment − used).
+ *      (transferred + startingBalanceAdjustment − used). {@code entitled} is
+ *      informational only and does not feed into this remainder.
  *   2. Move that remainder to {@code transferred} for the new year.
- *   3. Set {@code entitled} to the new-year allocation.
+ *   3. Set {@code entitled} to the new-year allocation (informational).
  *   4. Reset {@code used} and {@code startingBalanceAdjustment} to zero.
  *
  * Trigger: POST /api/users/year-end-rollover?requesterId={adminId}&newEntitledDays={n}
@@ -63,8 +64,7 @@ public class YearEndService {
                     .mapToDouble(lr -> lr.getTotalDays())
                     .sum();
 
-            double remaining = old.getEntitled()
-                    + old.getTransferred()
+            double remaining = old.getTransferred()
                     + old.getStartingBalanceAdjustment()
                     - actualUsed;
 

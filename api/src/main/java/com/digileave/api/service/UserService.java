@@ -3,6 +3,7 @@ package com.digileave.api.service;
 import com.digileave.api.dto.UserResponseDto;
 import com.digileave.api.mapper.DtoMapper;
 import com.digileave.api.model.AnnualLeaveBalance;
+import com.digileave.api.model.LeaveRequest;
 import com.digileave.api.model.LeaveStatus;
 import com.digileave.api.model.Role;
 import com.digileave.api.model.Team;
@@ -20,6 +21,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class UserService {
+
+    static final int DEFAULT_ENTITLED_DAYS = 20;
 
     private final UserRepository         userRepository;
     private final LeaveRequestRepository leaveRequestRepository;
@@ -128,8 +131,10 @@ public class UserService {
 
     /**
      * Updates the two admin-settable components of a user's annual leave balance:
-     * {@code entitled} (the current-year quota) and
-     * {@code startingBalanceAdjustment} (manual sync with accounting).
+     * {@code entitled} (the current-year quota, informational only — it does not
+     * feed into the available-balance calculation) and
+     * {@code startingBalanceAdjustment} (the starting balance leave requests are
+     * actually deducted from).
      *
      * The {@code transferred} field is managed exclusively by
      * {@link YearEndService#performRollover} and is never touched here.
@@ -137,12 +142,12 @@ public class UserService {
      * to prevent drift.
      *
      * @param userId                    the target user's ID
-     * @param entitled                  the new entitled days quota
-     * @param startingBalanceAdjustment the manual accounting adjustment (may be negative)
+     * @param entitled                  the new entitled days quota (informational)
+     * @param startingBalanceAdjustment the starting balance (may be negative)
      * @return the updated user DTO
      * @throws IllegalArgumentException if no user exists with the given ID
      */
-    public UserResponseDto adjustBalance(String userId, int entitled, int startingBalanceAdjustment) {
+    public UserResponseDto adjustBalance(String userId, double entitled, double startingBalanceAdjustment) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
 
@@ -151,14 +156,7 @@ public class UserService {
         AnnualLeaveBalance bal = getBalance(user);
         bal.setEntitled(entitled);
         bal.setStartingBalanceAdjustment(startingBalanceAdjustment);
-
-        double actualUsed = leaveRequestRepository
-                .findByUserIdAndStatus(userId, LeaveStatus.APPROVED)
-                .stream()
-                .filter(r -> LeaveService.affectsBalance(r.getType()))
-                .mapToDouble(lr -> lr.getTotalDays())
-                .sum();
-        bal.setUsed(actualUsed);
+        bal.setUsed(actualUsed(userId));
 
         user.setAnnualLeave(bal);
         User saved = userRepository.save(user);
@@ -167,6 +165,16 @@ public class UserService {
         auditLogService.log(actorId, userId, "BALANCE_ADJUSTED", before, bal);
 
         return mapper.toUserResponse(saved);
+    }
+
+    /** Sums approved, balance-affecting leave requests recorded for the user. */
+    private double actualUsed(String userId) {
+        return leaveRequestRepository
+                .findByUserIdAndStatus(userId, LeaveStatus.APPROVED)
+                .stream()
+                .filter(r -> LeaveService.affectsBalance(r.getType()))
+                .mapToDouble(LeaveRequest::getTotalDays)
+                .sum();
     }
 
     /**
@@ -216,6 +224,32 @@ public class UserService {
         }
 
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied.");
+    }
+
+    /**
+     * One-time repair: finds every user whose {@code AnnualLeaveBalance} is absent
+     * or has {@code entitled == 0} and sets it to {@value #DEFAULT_ENTITLED_DAYS}.
+     * Safe to run repeatedly — users already holding a non-zero entitlement are skipped.
+     *
+     * @return the number of user records updated
+     */
+    public int repairMissingEntitlement() {
+        List<User> broken = userRepository.findAll().stream()
+                .filter(u -> u.getAnnualLeave() == null || u.getAnnualLeave().getEntitled() == 0)
+                .collect(Collectors.toList());
+
+        for (User u : broken) {
+            AnnualLeaveBalance bal = u.getAnnualLeave() != null
+                    ? u.getAnnualLeave()
+                    : new AnnualLeaveBalance();
+            bal.setEntitled(DEFAULT_ENTITLED_DAYS);
+            u.setAnnualLeave(bal);
+            if (u.getEntitledDays() == 0) {
+                u.setEntitledDays(DEFAULT_ENTITLED_DAYS);
+            }
+            userRepository.save(u);
+        }
+        return broken.size();
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

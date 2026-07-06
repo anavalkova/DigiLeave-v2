@@ -24,7 +24,7 @@ export default function ApproverUsersView({ users, loading }) {
     if (field === 'available')  {
       const bal = u.annualLeave
       return bal
-        ? bal.entitled + bal.transferred + bal.startingBalanceAdjustment - bal.used
+        ? bal.transferred + bal.startingBalanceAdjustment - bal.used
         : (u.remainingDays ?? 0)
     }
     return null

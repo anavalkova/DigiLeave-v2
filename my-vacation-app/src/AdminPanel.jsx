@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import Pagination, { PAGE_SIZE, SortableTh } from './Pagination'
 import { useColumnFilters, FilterToolbar, FilterRow } from './ColumnFilters'
@@ -28,9 +28,8 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos]   = useState({ top: 0, left: 0, width: 0 })
   const triggerRef      = useRef(null)
-  const panelRef        = useRef(null)   // ← ref for the portal panel
+  const panelRef        = useRef(null)
 
-  // Recalculate portal position whenever the dropdown opens
   useEffect(() => {
     if (!open || !triggerRef.current) return
     const r = triggerRef.current.getBoundingClientRect()
@@ -41,10 +40,6 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
     })
   }, [open])
 
-  // Close on outside click — must exclude BOTH the trigger AND the portal panel.
-  // Without checking panelRef, any mousedown inside the portal looks "outside"
-  // because it lives on document.body, so the dropdown was closing before the
-  // checkbox onChange could fire.
   useEffect(() => {
     if (!open) return
     function onMouseDown(e) {
@@ -72,12 +67,11 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
 
   return (
     <div className="relative">
-      {/* Trigger */}
       <button
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center justify-between gap-2 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-[160px] max-w-[220px] w-full"
+        className="flex items-center justify-between gap-2 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full"
       >
         <span className="truncate text-left text-gray-800">
           {selectedNames.length > 0
@@ -85,14 +79,13 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
             : <span className="text-gray-400 italic">None</span>}
         </span>
         <svg
-          className={`w-3 h-3 text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
-      {/* Panel rendered via Portal so the table's overflow/stacking never clips it */}
       {open && createPortal(
         <div
           ref={panelRef}
@@ -123,7 +116,7 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
                     onChange={() => toggle(m.email)}
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
                   />
-                  <span className={`text-xs ${checked ? 'font-medium text-gray-900' : 'text-gray-600'}`}>
+                  <span className={`text-sm ${checked ? 'font-medium text-gray-900' : 'text-gray-600'}`}>
                     {m.name}
                   </span>
                 </label>
@@ -137,10 +130,27 @@ function ManagerDropdown({ managers, selected, userEmail, onChange }) {
   )
 }
 
+// ─── Role badge ───────────────────────────────────────────────────────────────
+
+function RoleBadge({ role }) {
+  const map = {
+    ADMIN:      'bg-red-100 text-red-700',
+    APPROVER:   'bg-purple-100 text-purple-700',
+    ACCOUNTANT: 'bg-amber-100 text-amber-700',
+  }
+  const cls   = map[role] ?? 'bg-gray-100 text-gray-600'
+  const label = role ? role.charAt(0) + role.slice(1).toLowerCase() : 'User'
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>
+      {label}
+    </span>
+  )
+}
+
 // ─── Column filter config ─────────────────────────────────────────────────────
 
 const USER_COLS = [
-  { filter: { type: 'text', key: 'name'  } },
+  { filter: { type: 'text', key: 'name' } },
   { filter: { type: 'text', key: 'email' } },
   { filter: { type: 'select', key: 'role', options: [
     { value: '',           label: 'All Roles'  },
@@ -150,52 +160,268 @@ const USER_COLS = [
     { value: 'ADMIN',      label: 'Admin'      },
   ]}},
   { filter: null },
-  { filter: null },
-  { filter: { type: 'select', key: 'team', options: [
-    { value: '',    label: 'All Teams' },
-    { value: 'OPR', label: 'OPR'      },
-    { value: 'DEV', label: 'DEV'      },
-  ]}},
-  { filter: null },
 ]
 
-const USER_INITIAL = { name: '', email: '', role: '', team: '' }
+const USER_INITIAL = { name: '', email: '', role: '' }
+
+// ─── Field helpers ────────────────────────────────────────────────────────────
+
+const fieldLabel = 'block text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1.5'
+const fieldInput = (disabled) =>
+  `w-full rounded-lg border px-3 py-2 text-sm text-gray-800 transition-colors
+   focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+   ${disabled
+     ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
+     : 'border-gray-300 bg-white hover:border-gray-400'}`
+
+// ─── User Edit Drawer ─────────────────────────────────────────────────────────
+
+function UserEditDrawer({ open, user: u, managers, isAdmin, onSave, onClose, saving, error, demotionWarn }) {
+  const orig = useMemo(() => ({
+    role:                      u.role ?? 'USER',
+    approverEmails:            u.approverEmails ?? [],
+    entitled:                  u.annualLeave?.entitled ?? u.entitledDays ?? 0,
+    startingBalanceAdjustment: u.annualLeave?.startingBalanceAdjustment ?? 0,
+    team:                      u.team ?? '',
+  }), [u])
+
+  const [edits, setEdits] = useState(orig)
+
+  // Close on Escape
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  function field(key, value) {
+    setEdits(prev => ({ ...prev, [key]: value }))
+  }
+
+  const approversChanged =
+    JSON.stringify([...edits.approverEmails].sort()) !==
+    JSON.stringify([...orig.approverEmails].sort())
+
+  const isDirty =
+    edits.role !== orig.role ||
+    edits.entitled !== orig.entitled ||
+    edits.startingBalanceAdjustment !== orig.startingBalanceAdjustment ||
+    edits.team !== orig.team ||
+    approversChanged
+
+  const transferred = u.annualLeave?.transferred ?? 0
+
+  return createPortal(
+    <div className={`fixed inset-0 z-50 ${open ? '' : 'pointer-events-none'}`}>
+
+      {/* Backdrop */}
+      <div
+        aria-hidden="true"
+        className={`absolute inset-0 bg-black/50 transition-opacity duration-300 ${open ? 'opacity-100' : 'opacity-0'}`}
+        onClick={onClose}
+      />
+
+      {/* Drawer panel */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Edit ${u.name}`}
+        className={`absolute right-0 top-0 bottom-0 w-full max-w-md bg-white shadow-2xl
+          flex flex-col transition-transform duration-300 ease-in-out
+          ${open ? 'translate-x-0' : 'translate-x-full'}`}
+      >
+
+        {/* ── Header ──────────────────────────────────────────────────── */}
+        <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-5 shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-gray-900 truncate">{u.name}</h2>
+            <p className="mt-0.5 text-sm text-gray-400 truncate">{u.email}</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* ── Scrollable form body ─────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
+          {/* Role */}
+          <div>
+            <label className={fieldLabel}>Role</label>
+            <select
+              value={edits.role}
+              onChange={e => field('role', e.target.value)}
+              disabled={!isAdmin}
+              className={fieldInput(!isAdmin)}
+            >
+              <option value="USER">User</option>
+              <option value="APPROVER">Approver</option>
+              <option value="ACCOUNTANT">Accountant</option>
+              <option value="ADMIN">Admin</option>
+            </select>
+          </div>
+
+          {/* Entitled Days */}
+          <div>
+            <label className={fieldLabel}>Entitled Days</label>
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              value={edits.entitled}
+              onChange={e => field('entitled', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+              disabled={!isAdmin}
+              className={fieldInput(!isAdmin)}
+            />
+          </div>
+
+          {/* Starting Balance — leave requests are deducted from this */}
+          <div>
+            <label className={fieldLabel}>Starting Balance</label>
+            <input
+              type="number"
+              step="0.5"
+              value={edits.startingBalanceAdjustment}
+              onChange={e => field('startingBalanceAdjustment', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+              disabled={!isAdmin}
+              className={fieldInput(!isAdmin)}
+            />
+            {transferred !== 0 && (
+              <p className="mt-1 text-xs text-cyan-600">+{transferred} carried over from previous year</p>
+            )}
+          </div>
+
+          {/* Legal Entity — Phase 4 placeholder */}
+          <div>
+            <label className={fieldLabel}>Legal Entity</label>
+            <select
+              disabled
+              value=""
+              onChange={() => {}}
+              className={fieldInput(true)}
+            >
+              <option value="">— Available in Phase 4 —</option>
+            </select>
+          </div>
+
+          {/* Managers */}
+          <div>
+            <label className={fieldLabel}>Managers</label>
+            {isAdmin ? (
+              <ManagerDropdown
+                managers={managers}
+                selected={edits.approverEmails}
+                userEmail={u.email}
+                onChange={v => field('approverEmails', v)}
+              />
+            ) : (
+              <p className={`text-sm ${managers.filter(m => (u.approverEmails ?? []).includes(m.email)).length ? 'text-gray-700' : 'text-gray-400 italic'}`}>
+                {managers.filter(m => (u.approverEmails ?? []).includes(m.email)).map(m => m.name).join(', ') || 'None'}
+              </p>
+            )}
+          </div>
+
+          {/* Team */}
+          <div>
+            <label className={fieldLabel}>Team</label>
+            <select
+              value={edits.team}
+              onChange={e => field('team', e.target.value)}
+              disabled={!isAdmin}
+              className={fieldInput(!isAdmin)}
+            >
+              <option value="">—</option>
+              <option value="OPR">OPR</option>
+              <option value="DEV">DEV</option>
+            </select>
+          </div>
+
+          {/* Demotion warning */}
+          {demotionWarn && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+              <span className="font-semibold">Warning:</span> {u.name} is currently a manager for
+              other users. Removing their Approver role will not automatically reassign those users.
+            </div>
+          )}
+
+          {/* Save error */}
+          {error && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        {/* ── Footer ──────────────────────────────────────────────────── */}
+        <div className="shrink-0 border-t border-gray-100 px-6 py-4 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300"
+          >
+            Cancel
+          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => onSave(edits)}
+              disabled={!isDirty || saving}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {saving ? 'Saving…' : demotionWarn ? 'Save anyway' : 'Save Changes'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
 
 // ─── Admin panel ──────────────────────────────────────────────────────────────
 
 export default function AdminPanel({
   allUsers,
   usersLoading,
+  isAdmin,
   onSaveRole,
   onSaveApprovers,
   onSaveBalance,
   onSaveTeam,
   onRefreshUsers,
 }) {
-  // rowEdits: { [userId]: { role?, approverEmails?, entitled?, startingBalanceAdjustment?, team? } }
-  const [rowEdits, setRowEdits]     = useState({})
-  const [saving, setSaving]         = useState({})
-  const [saveError, setSaveError]   = useState({})
-  const [toast, setToast]           = useState(null)
-  const [approverWarn, setApproverWarn] = useState(null)
-  const [page, setPage]             = useState(1)
-  const [userSort, setUserSort]     = useState({ key: 'name', dir: 'asc' })
+  const [drawerUser, setDrawerUser]   = useState(null)
+  const [drawerOpen, setDrawerOpen]   = useState(false)
+  const [drawerSaving, setDrawerSaving] = useState(false)
+  const [drawerError, setDrawerError] = useState(null)
+  const [demotionWarn, setDemotionWarn] = useState(false)
+  const [pendingEdits, setPendingEdits] = useState(null)
+  const [toast, setToast]             = useState(null)
+  const [page, setPage]               = useState(1)
+  const [userSort, setUserSort]       = useState({ key: 'name', dir: 'asc' })
+  const closeTimer                    = useRef(null)
+
+  // Cleanup timer on unmount
+  useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current) }, [])
 
   const cf = useColumnFilters(USER_INITIAL)
   useEffect(() => { setPage(1) }, [cf.raw])
 
-  // Managers dropdown always uses the full unfiltered list so role changes
-  // in pending edits still appear as approver options immediately.
-  const managers = allUsers.filter((u) => {
-    const effectiveRole = rowEdits[u.id]?.role ?? u.role ?? 'USER'
-    return effectiveRole === 'ADMIN' || effectiveRole === 'APPROVER'
+  const managers = allUsers.filter(u => {
+    const role = u.role ?? 'USER'
+    return role === 'ADMIN' || role === 'APPROVER'
   })
 
-  // Client-side filtering keeps the manager dropdown working on the full set.
   const filteredUsers = useMemo(() => {
-    const { name, email, role, team } = cf.raw
+    const { name, email, role } = cf.raw
     let result = allUsers
-
     if (name) {
       const lc = name.toLowerCase()
       result = result.filter(u => (u.name ?? '').toLowerCase().includes(lc))
@@ -207,27 +433,17 @@ export default function AdminPanel({
     if (role) {
       result = result.filter(u => (u.role ?? '') === role)
     }
-    if (team) {
-      result = result.filter(u => (u.team ?? '') === team)
-    }
     return result
   }, [allUsers, cf.raw])
 
-  // Users sorted by chosen column; paginated
   const sortedUsers = useMemo(() => {
     const { key, dir } = userSort
     return [...filteredUsers].sort((a, b) => {
-      let cmp
-      if (key === 'entitled') {
-        cmp = Number(a.annualLeave?.entitled ?? a.entitledDays ?? 0) - Number(b.annualLeave?.entitled ?? b.entitledDays ?? 0)
-      } else if (key === 'team') {
-        cmp = String(a.team ?? '').localeCompare(String(b.team ?? ''))
-      } else {
-        cmp = String(a[key] ?? '').localeCompare(String(b[key] ?? ''))
-      }
+      const cmp = String(a[key] ?? '').localeCompare(String(b[key] ?? ''))
       return dir === 'asc' ? cmp : -cmp
     })
   }, [filteredUsers, userSort])
+
   const pagedUsers = sortedUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   function handleUserSort(key) {
@@ -239,92 +455,106 @@ export default function AdminPanel({
     setPage(1)
   }
 
-  function get(userId, field, fallback) {
-    return rowEdits[userId]?.[field] ?? fallback
+  function openDrawer(u) {
+    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null }
+    setDrawerUser(u)
+    setDrawerOpen(true)
+    setDrawerError(null)
+    setDemotionWarn(false)
+    setPendingEdits(null)
   }
 
-  function set(userId, field, value) {
-    setRowEdits((prev) => ({
-      ...prev,
-      [userId]: { ...(prev[userId] ?? {}), [field]: value },
-    }))
-    // Clear any prior save error for this row when the user edits again
-    setSaveError((prev) => { const next = { ...prev }; delete next[userId]; return next })
+  function closeDrawer() {
+    setDrawerOpen(false)
+    closeTimer.current = setTimeout(() => {
+      setDrawerUser(null)
+      setDrawerError(null)
+      setDemotionWarn(false)
+      setPendingEdits(null)
+      closeTimer.current = null
+    }, 300)
   }
 
-  function isDirty(userId) {
-    const e = rowEdits[userId]
-    return e !== undefined && Object.keys(e).length > 0
+  function wouldOrphan(u, newRole) {
+    if (!newRole || newRole === u.role || u.role !== 'APPROVER') return false
+    return allUsers.some(other => other.id !== u.id && (other.approverEmails ?? []).includes(u.email))
   }
 
-  // True if this user is being demoted FROM Approver and currently manages others
-  function wouldOrphanUsers(u) {
-    const pendingRole = rowEdits[u.id]?.role
-    if (!pendingRole || pendingRole === u.role) return false
-    if (u.role !== 'APPROVER') return false
-    return allUsers.some(
-      (other) => other.id !== u.id && other.approverEmails?.includes(u.email)
-    )
-  }
+  async function handleDrawerSave(edits) {
+    const u = drawerUser
+    if (!u) return
 
-  // Called when Save is clicked — may show a warning first
-  function handleSaveClick(u) {
-    if (wouldOrphanUsers(u)) {
-      setApproverWarn(u.id)
+    if (wouldOrphan(u, edits.role) && !demotionWarn) {
+      setDemotionWarn(true)
+      setPendingEdits(edits)
       return
     }
-    doSave(u)
-  }
 
-  async function doSave(u) {
-    setApproverWarn(null)
-    const edits = rowEdits[u.id]
-    if (!edits) return
-
-    setSaving((prev) => ({ ...prev, [u.id]: true }))
-    setSaveError((prev) => { const next = { ...prev }; delete next[u.id]; return next })
+    const saveEdits = pendingEdits ?? edits
+    setDrawerSaving(true)
+    setDrawerError(null)
 
     try {
-      const hasBalanceEdit = 'entitled' in edits || 'startingBalanceAdjustment' in edits
+      const orig = {
+        role:                      u.role ?? 'USER',
+        approverEmails:            u.approverEmails ?? [],
+        entitled:                  u.annualLeave?.entitled ?? u.entitledDays ?? 0,
+        startingBalanceAdjustment: u.annualLeave?.startingBalanceAdjustment ?? 0,
+        team:                      u.team ?? '',
+      }
+
+      const hasBalanceEdit =
+        saveEdits.entitled !== orig.entitled ||
+        saveEdits.startingBalanceAdjustment !== orig.startingBalanceAdjustment
+
+      const approversChanged =
+        JSON.stringify([...saveEdits.approverEmails].sort()) !==
+        JSON.stringify([...orig.approverEmails].sort())
+
       await Promise.all([
-        'role'           in edits ? onSaveRole(u.id, edits.role)                : null,
-        'approverEmails' in edits ? onSaveApprovers(u.id, edits.approverEmails) : null,
-        'team'           in edits ? onSaveTeam(u.id, edits.team)               : null,
+        saveEdits.role !== orig.role
+          ? onSaveRole(u.id, saveEdits.role) : null,
+        approversChanged
+          ? onSaveApprovers(u.id, saveEdits.approverEmails) : null,
+        saveEdits.team !== orig.team
+          ? onSaveTeam(u.id, saveEdits.team || null) : null,
         hasBalanceEdit
-          ? onSaveBalance(
-              u.id,
-              Math.round(edits.entitled               ?? (u.annualLeave?.entitled               ?? u.entitledDays ?? 0)),
-              Math.round(edits.startingBalanceAdjustment ?? (u.annualLeave?.startingBalanceAdjustment ?? 0))
-            )
+          ? onSaveBalance(u.id, saveEdits.entitled || 0, saveEdits.startingBalanceAdjustment || 0)
           : null,
       ].filter(Boolean))
 
-      // Only clear local edits after every save succeeded
-      setRowEdits((prev) => {
-        const next = { ...prev }
-        delete next[u.id]
-        return next
-      })
       setToast({ message: `${u.name} saved.`, type: 'success' })
       onRefreshUsers?.()
+      closeDrawer()
     } catch (err) {
       const detail = err.response?.data?.message ?? err.response?.data ?? err.message ?? null
       const msg = typeof detail === 'string' && detail.length < 200
         ? `Save failed: ${detail}`
         : 'Save failed — please try again.'
-      setSaveError((prev) => ({ ...prev, [u.id]: msg }))
+      setDrawerError(msg)
     } finally {
-      setSaving((prev) => ({ ...prev, [u.id]: false }))
+      setDrawerSaving(false)
     }
   }
 
   return (
     <div id="user-management">
       {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          onDone={() => setToast(null)}
+        <Toast message={toast.message} type={toast.type} onDone={() => setToast(null)} />
+      )}
+
+      {drawerUser && (
+        <UserEditDrawer
+          key={drawerUser.id}
+          open={drawerOpen}
+          user={drawerUser}
+          managers={managers}
+          isAdmin={isAdmin}
+          onSave={handleDrawerSave}
+          onClose={closeDrawer}
+          saving={drawerSaving}
+          error={drawerError}
+          demotionWarn={demotionWarn}
         />
       )}
 
@@ -351,158 +581,32 @@ export default function AdminPanel({
           <table className="w-full text-sm text-left text-gray-700">
             <thead>
               <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
-                <SortableTh label="Name"          colKey="name"         sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
-                <SortableTh label="Email"         colKey="email"        sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
-                <SortableTh label="Role"          colKey="role"         sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
-                <th scope="col" className="py-3 pr-4 font-medium">Managers</th>
-                <SortableTh label="Balance" colKey="entitled" sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
-                <SortableTh label="Team"    colKey="team"     sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
-                <th scope="col" className="py-3 font-medium"><span className="sr-only">Save</span></th>
+                <SortableTh label="Name"  colKey="name"  sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
+                <SortableTh label="Email" colKey="email" sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
+                <SortableTh label="Role"  colKey="role"  sortKey={userSort.key} sortDir={userSort.dir} onSort={handleUserSort} />
+                <th scope="col" className="py-3 font-medium"><span className="sr-only">Edit</span></th>
               </tr>
               {cf.open && <FilterRow columns={USER_COLS} filters={cf.raw} onUpdate={cf.update} />}
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {pagedUsers.map((u) => {
-                const dirty            = isDirty(u.id)
-                const isSaving         = saving[u.id] ?? false
-                const error            = saveError[u.id]
-                const currentRole      = get(u.id, 'role', u.role ?? 'USER')
-                const currentApprovers = get(u.id, 'approverEmails', u.approverEmails ?? [])
-                const currentEntitled  = get(u.id, 'entitled', u.annualLeave?.entitled ?? u.entitledDays ?? 0)
-                const currentAdj       = get(u.id, 'startingBalanceAdjustment', u.annualLeave?.startingBalanceAdjustment ?? 0)
-                const transferred      = u.annualLeave?.transferred ?? 0
-                const currentTeam      = get(u.id, 'team', u.team ?? '')
-                const showWarn         = approverWarn === u.id
-
-                // key must be on Fragment — not on an inner <tr> — so React can
-                // properly track multi-row groups in a list.
-                return (
-                  <Fragment key={u.id}>
-                    <tr className="hover:bg-gray-50 transition-colors">
-
-                      {/* Name */}
-                      <td className="py-3 pr-4 font-medium whitespace-nowrap">{u.name}</td>
-
-                      {/* Email */}
-                      <td className="py-3 pr-4 text-xs text-gray-500">{u.email}</td>
-
-                      {/* Role — controlled select */}
-                      <td className="py-3 pr-4">
-                        <select
-                          value={currentRole}
-                          onChange={(e) => set(u.id, 'role', e.target.value)}
-                          className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
-                        >
-                          <option value="USER">User</option>
-                          <option value="APPROVER">Approver</option>
-                          <option value="ACCOUNTANT">Accountant</option>
-                          <option value="ADMIN">Admin</option>
-                        </select>
-                      </td>
-
-                      {/* Managers — controlled multi-select dropdown */}
-                      <td className="py-3 pr-4">
-                        <ManagerDropdown
-                          managers={managers}
-                          selected={currentApprovers}
-                          userEmail={u.email}
-                          onChange={(emails) => set(u.id, 'approverEmails', emails)}
-                        />
-                      </td>
-
-                      {/* Balance: entitled + adjustment inputs, carried-over display */}
-                      <td className="py-3 pr-4">
-                        <div className="flex flex-col gap-1.5 min-w-[180px]">
-                          <label className="flex items-center gap-1.5 text-xs text-gray-500">
-                            <span className="w-20 shrink-0">Entitled</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={currentEntitled}
-                              onChange={(e) => set(u.id, 'entitled', Number(e.target.value))}
-                              className="w-16 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs text-gray-500">
-                            <span className="w-20 shrink-0">Adjustment</span>
-                            <input
-                              type="number"
-                              step="1"
-                              value={currentAdj}
-                              onChange={(e) => set(u.id, 'startingBalanceAdjustment', Number(e.target.value))}
-                              className="w-16 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </label>
-                          {transferred !== 0 && (
-                            <span className="text-xs text-cyan-600">
-                              +{transferred} carried over
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Team */}
-                      <td className="py-3 pr-4">
-                        <select
-                          value={currentTeam}
-                          onChange={(e) => set(u.id, 'team', e.target.value || null)}
-                          className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
-                        >
-                          <option value="">—</option>
-                          <option value="OPR">OPR</option>
-                          <option value="DEV">DEV</option>
-                        </select>
-                      </td>
-
-                      {/* Save — disabled unless this specific row has unsaved changes */}
-                      <td className="py-3">
-                        <button
-                          type="button"
-                          onClick={() => handleSaveClick(u)}
-                          disabled={!dirty || isSaving}
-                          className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-                        >
-                          {isSaving ? 'Saving…' : 'Save'}
-                        </button>
-                      </td>
-                    </tr>
-
-                    {/* Approver-demotion warning row */}
-                    {showWarn && (
-                      <tr className="bg-amber-50">
-                        <td colSpan={7} className="py-2 px-3 text-xs text-amber-800">
-                          <span className="font-medium">Warning:</span>{' '}
-                          {u.name} is currently a manager for other users. Removing their
-                          Approver role will not automatically reassign those users.{' '}
-                          <button
-                            type="button"
-                            onClick={() => doSave(u)}
-                            className="underline font-medium text-amber-900 hover:text-amber-700"
-                          >
-                            Save anyway
-                          </button>
-                          {' · '}
-                          <button
-                            type="button"
-                            onClick={() => setApproverWarn(null)}
-                            className="underline text-amber-700 hover:text-amber-500"
-                          >
-                            Cancel
-                          </button>
-                        </td>
-                      </tr>
-                    )}
-
-                    {/* Inline error row — only rendered on save failure */}
-                    {error && (
-                      <tr className="bg-red-50">
-                        <td colSpan={7} className="py-1.5 px-3 text-xs text-red-600">{error}</td>
-                      </tr>
-                    )}
-                  </Fragment>
-                )
-              })}
+              {pagedUsers.map((u) => (
+                <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="py-3 pr-4 font-medium whitespace-nowrap">{u.name}</td>
+                  <td className="py-3 pr-4 text-xs text-gray-500">{u.email}</td>
+                  <td className="py-3 pr-4">
+                    <RoleBadge role={u.role} />
+                  </td>
+                  <td className="py-3">
+                    <button
+                      type="button"
+                      onClick={() => openDrawer(u)}
+                      className="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
           <Pagination

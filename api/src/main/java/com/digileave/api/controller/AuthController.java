@@ -6,6 +6,7 @@ import com.digileave.api.mapper.DtoMapper;
 import com.digileave.api.model.RefreshToken;
 import com.digileave.api.model.User;
 import com.digileave.api.repository.RefreshTokenRepository;
+import com.digileave.api.repository.UserRepository;
 import com.digileave.api.service.AuthService;
 import com.digileave.api.service.JwtService;
 import jakarta.servlet.http.Cookie;
@@ -46,15 +47,18 @@ public class AuthController {
     private final AuthService            authService;
     private final JwtService             jwtService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final UserRepository         userRepository;
     private final DtoMapper              mapper;
 
     public AuthController(AuthService authService,
                           JwtService jwtService,
                           RefreshTokenRepository refreshTokenRepository,
+                          UserRepository userRepository,
                           DtoMapper mapper) {
         this.authService            = authService;
         this.jwtService             = jwtService;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.userRepository         = userRepository;
         this.mapper                 = mapper;
     }
 
@@ -64,7 +68,8 @@ public class AuthController {
             HttpServletResponse response) {
         try {
             User user = authService.verifyAndUpsertUser(request.getIdToken());
-            String accessToken = jwtService.generateAccessToken(user.getId());
+            String role = user.getRole() != null ? user.getRole().name() : "USER";
+            String accessToken = jwtService.generateAccessToken(user.getId(), role);
             issueRefreshCookie(user.getId(), response);
             return ResponseEntity.ok(new AuthResponse(accessToken, mapper.toUserResponse(user)));
         } catch (IllegalArgumentException e) {
@@ -91,11 +96,14 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        // Rotate: delete old token and issue a new one
+        // Rotate: delete old token and issue a new one; re-read role so changes take effect immediately
         refreshTokenRepository.delete(stored);
         issueRefreshCookie(stored.getUserId(), response);
 
-        String accessToken = jwtService.generateAccessToken(stored.getUserId());
+        String role = userRepository.findById(stored.getUserId())
+                .map(u -> u.getRole() != null ? u.getRole().name() : "USER")
+                .orElse("USER");
+        String accessToken = jwtService.generateAccessToken(stored.getUserId(), role);
         return ResponseEntity.ok(Map.of("accessToken", accessToken));
     }
 

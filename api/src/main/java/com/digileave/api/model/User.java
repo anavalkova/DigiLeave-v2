@@ -31,7 +31,7 @@ public class User {
     // (migrate-to-ledger.mjs) has run against every environment, these fields
     // can be removed from this class and from MongoDB with an unset migration.
     /** @deprecated Use {@code annualLeave.entitled} instead. */
-    @Deprecated private int entitledDays;
+    @Deprecated private int entitledDays = 20;
     /** @deprecated Derived from annualLeave; no longer maintained. */
     @Deprecated private int remainingDays;
     /** @deprecated Use {@code annualLeave.used} instead. */

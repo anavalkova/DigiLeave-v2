@@ -1,5 +1,6 @@
 package com.digileave.api.service;
 
+import com.digileave.api.model.AnnualLeaveBalance;
 import com.digileave.api.model.Role;
 import com.digileave.api.model.User;
 import com.digileave.api.repository.UserRepository;
@@ -100,9 +101,16 @@ public class AuthService {
                         existing.setRole(resolveRole(email));
                     }
                     // Migrate entitlement for users created before entitlement was introduced
-                    if (existing.getEntitledDays() == 0 && email.endsWith(COMPANY_DOMAIN)) {
+                    if (existing.getEntitledDays() == 0) {
                         existing.setEntitledDays(COMPANY_ENTITLED);
                         existing.setRemainingDays(COMPANY_ENTITLED);
+                    }
+                    if (existing.getAnnualLeave() == null) {
+                        AnnualLeaveBalance bal = new AnnualLeaveBalance();
+                        bal.setEntitled(COMPANY_ENTITLED);
+                        existing.setAnnualLeave(bal);
+                    } else if (existing.getAnnualLeave().getEntitled() == 0) {
+                        existing.getAnnualLeave().setEntitled(COMPANY_ENTITLED);
                     }
                     // Migrate approverEmails for users created before hierarchy was introduced
                     if ((existing.getApproverEmails() == null || existing.getApproverEmails().isEmpty())
@@ -118,10 +126,11 @@ public class AuthService {
                     user.setName(name);
                     user.setPicture(picture);
                     user.setRole(resolveRole(email));
-                    if (email.endsWith(COMPANY_DOMAIN)) {
-                        user.setEntitledDays(COMPANY_ENTITLED);
-                        user.setRemainingDays(COMPANY_ENTITLED);
-                    }
+                    user.setEntitledDays(COMPANY_ENTITLED);
+                    user.setRemainingDays(COMPANY_ENTITLED);
+                    AnnualLeaveBalance bal = new AnnualLeaveBalance();
+                    bal.setEntitled(COMPANY_ENTITLED);
+                    user.setAnnualLeave(bal);
                     // Default manager for every non-admin user is the admin
                     if (!ADMIN_EMAIL.equals(email)) {
                         user.setApproverEmails(List.of(ADMIN_EMAIL));

@@ -1,19 +1,23 @@
 package com.digileave.api.dto;
 
-import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.DecimalMin;
 import lombok.Data;
 
 /**
  * Payload for PATCH /api/users/{id}/balance.
- * Allows an admin to set the current-year entitlement and/or the
- * one-off accounting adjustment without touching the transferred field
- * (which is managed exclusively by the year-end rollover process).
+ * Allows an admin to set the current-year entitlement (informational only)
+ * and/or the starting balance that leave requests are actually deducted
+ * from, without touching the transferred field (which is managed
+ * exclusively by the year-end rollover process).
+ *
+ * Both fields are boxed Doubles so missing/null JSON values are
+ * defaulted to 0.0 in the controller rather than failing deserialization.
  */
 @Data
 public class BalanceAdjustmentDto {
 
-    @Min(0)
-    private int entitled;
+    @DecimalMin("0.0")
+    private Double entitled;
 
-    private int startingBalanceAdjustment;
+    private Double startingBalanceAdjustment;
 }

@@ -9,6 +9,7 @@ import com.digileave.api.service.UserService;
 import com.digileave.api.service.YearEndService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -60,6 +61,7 @@ public class UserController {
         return ResponseEntity.ok(userService.getUser(id));
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
     @PatchMapping("/{id}/role")
     public ResponseEntity<UserResponseDto> updateRole(
             @PathVariable String id,
@@ -67,6 +69,7 @@ public class UserController {
         return ResponseEntity.ok(userService.updateRole(id, dto.getRole()));
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
     @PatchMapping("/{id}/approver")
     public ResponseEntity<UserResponseDto> updateApprover(
             @PathVariable String id,
@@ -74,6 +77,7 @@ public class UserController {
         return ResponseEntity.ok(userService.updateApprovers(id, dto.getApproverEmails()));
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
     @PatchMapping("/{id}/team")
     public ResponseEntity<UserResponseDto> updateTeam(
             @PathVariable String id,
@@ -83,14 +87,16 @@ public class UserController {
 
     /**
      * PATCH /api/users/{id}/balance
-     * Sets entitled days and the one-off accounting adjustment.
+     * Sets entitled days (informational) and the starting balance that leave is deducted from.
      */
+    @PreAuthorize("hasRole('ADMIN')")
     @PatchMapping("/{id}/balance")
     public ResponseEntity<UserResponseDto> adjustBalance(
             @PathVariable String id,
             @Valid @RequestBody BalanceAdjustmentDto dto) {
-        return ResponseEntity.ok(
-                userService.adjustBalance(id, dto.getEntitled(), dto.getStartingBalanceAdjustment()));
+        double entitled = dto.getEntitled() != null ? dto.getEntitled() : 0.0;
+        double adj      = dto.getStartingBalanceAdjustment() != null ? dto.getStartingBalanceAdjustment() : 0.0;
+        return ResponseEntity.ok(userService.adjustBalance(id, entitled, adj));
     }
 
     /**

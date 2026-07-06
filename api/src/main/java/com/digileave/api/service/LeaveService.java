@@ -179,7 +179,7 @@ public class LeaveService {
                     .mapToDouble(LeaveRequest::getTotalDays)
                     .sum();
 
-            double totalGranted  = bal.getEntitled() + bal.getTransferred() + bal.getStartingBalanceAdjustment();
+            double totalGranted  = bal.getTransferred() + bal.getStartingBalanceAdjustment();
             double availableDays = totalGranted - approvedDays - pendingDays;
 
             if (totalDays > availableDays) {
@@ -270,8 +270,7 @@ public class LeaveService {
                 .mapToDouble(LeaveRequest::getTotalDays)
                 .sum();
 
-        double available = bal.getEntitled() + bal.getTransferred()
-                + bal.getStartingBalanceAdjustment() - used;
+        double available = bal.getTransferred() + bal.getStartingBalanceAdjustment() - used;
 
         return new LeaveSummaryDto(
                 bal.getEntitled(),

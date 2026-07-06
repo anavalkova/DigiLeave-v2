@@ -18,6 +18,7 @@ class JwtServiceTest {
     // 48 ASCII chars → 384-bit key, well above the 256-bit HMAC-SHA minimum
     private static final String SECRET  = "test-secret-key-must-be-at-least-32-bytes-long!!";
     private static final String USER_ID = "user-abc-123";
+    private static final String ROLE    = "EMPLOYEE";
 
     private JwtService jwtService;
 
@@ -35,19 +36,19 @@ class JwtServiceTest {
 
         @Test
         void subject_matchesProvidedUserId() {
-            String token = jwtService.generateAccessToken(USER_ID);
+            String token = jwtService.generateAccessToken(USER_ID, ROLE);
             assertThat(jwtService.extractUserId(token)).isEqualTo(USER_ID);
         }
 
         @Test
         void token_isWellFormedCompactJwt() {
-            String token = jwtService.generateAccessToken(USER_ID);
+            String token = jwtService.generateAccessToken(USER_ID, ROLE);
             assertThat(token.split("\\.")).hasSize(3);
         }
 
         @Test
         void token_signedWithConfiguredSecret_parsesWithoutException() {
-            String token = jwtService.generateAccessToken(USER_ID);
+            String token = jwtService.generateAccessToken(USER_ID, ROLE);
             SecretKey key = Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8));
             assertThatNoException().isThrownBy(() ->
                     Jwts.parser().verifyWith(key).build().parseSignedClaims(token));
@@ -62,20 +63,20 @@ class JwtServiceTest {
 
         @Test
         void validToken_returnsTrue() {
-            String token = jwtService.generateAccessToken(USER_ID);
+            String token = jwtService.generateAccessToken(USER_ID, ROLE);
             assertThat(jwtService.isValid(token)).isTrue();
         }
 
         @Test
         void expiredToken_returnsFalse() {
             ReflectionTestUtils.setField(jwtService, "accessTokenExpiryMs", -1_000L);
-            String token = jwtService.generateAccessToken(USER_ID);
+            String token = jwtService.generateAccessToken(USER_ID, ROLE);
             assertThat(jwtService.isValid(token)).isFalse();
         }
 
         @Test
         void tamperedPayload_returnsFalse() {
-            String token   = jwtService.generateAccessToken(USER_ID);
+            String token   = jwtService.generateAccessToken(USER_ID, ROLE);
             String[] parts = token.split("\\.");
             String tampered = parts[0] + "." + parts[1] + "TAMPERED" + "." + parts[2];
             assertThat(jwtService.isValid(tampered)).isFalse();
@@ -83,7 +84,7 @@ class JwtServiceTest {
 
         @Test
         void tamperedSignature_returnsFalse() {
-            String token   = jwtService.generateAccessToken(USER_ID);
+            String token   = jwtService.generateAccessToken(USER_ID, ROLE);
             String[] parts = token.split("\\.");
             String tampered = parts[0] + "." + parts[1] + ".invalidsignature";
             assertThat(jwtService.isValid(tampered)).isFalse();
@@ -120,7 +121,7 @@ class JwtServiceTest {
 
         @Test
         void extractsSubjectFromSelfIssuedToken() {
-            String token = jwtService.generateAccessToken(USER_ID);
+            String token = jwtService.generateAccessToken(USER_ID, ROLE);
             assertThat(jwtService.extractUserId(token)).isEqualTo(USER_ID);
         }
 
@@ -139,14 +140,14 @@ class JwtServiceTest {
         @Test
         void expiredToken_throwsJwtException() {
             ReflectionTestUtils.setField(jwtService, "accessTokenExpiryMs", -1_000L);
-            String token = jwtService.generateAccessToken(USER_ID);
+            String token = jwtService.generateAccessToken(USER_ID, ROLE);
             assertThatThrownBy(() -> jwtService.extractUserId(token))
                     .isInstanceOf(io.jsonwebtoken.JwtException.class);
         }
 
         @Test
         void tamperedToken_throwsJwtException() {
-            String token   = jwtService.generateAccessToken(USER_ID);
+            String token   = jwtService.generateAccessToken(USER_ID, ROLE);
             String[] parts = token.split("\\.");
             String tampered = parts[0] + "." + parts[1] + ".badsig";
             assertThatThrownBy(() -> jwtService.extractUserId(tampered))
@@ -157,7 +158,7 @@ class JwtServiceTest {
         void differentUserIds_extractCorrectly() {
             String[] ids = {"user-1", "admin-99", "uuid-550e8400-e29b-41d4-a716"};
             for (String id : ids) {
-                String token = jwtService.generateAccessToken(id);
+                String token = jwtService.generateAccessToken(id, ROLE);
                 assertThat(jwtService.extractUserId(token)).isEqualTo(id);
             }
         }
